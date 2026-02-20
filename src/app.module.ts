@@ -8,6 +8,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { HealthModule } from './health/health.module';
 import { MailerModule } from './mailer/mailer.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { SuperadminModule } from './superadmin/superadmin.module';
 
 @Module({
   imports: [
@@ -63,6 +64,7 @@ import { PrismaModule } from './prisma/prisma.module';
     MailerModule,
     HealthModule,
     AuthModule,
+    SuperadminModule,
   ],
   providers: [
     {

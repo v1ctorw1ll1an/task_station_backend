@@ -42,4 +42,36 @@ export class MailerService {
 
     this.logger.info({ to }, 'Password reset email sent via Resend');
   }
+
+  async sendWelcomeEmail(to: string, name: string, tempPassword: string): Promise<void> {
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:3000');
+
+    const { error } = await this.resend.emails.send({
+      from: this.from,
+      to,
+      subject: 'Bem-vindo ao Task Station — Suas credenciais de acesso',
+      html: `
+        <p>Olá, <strong>${name}</strong>!</p>
+        <p>Sua conta no <strong>Task Station</strong> foi criada. Utilize as credenciais abaixo para o primeiro acesso:</p>
+        <ul>
+          <li><strong>Email:</strong> ${to}</li>
+          <li><strong>Senha temporária:</strong> ${tempPassword}</li>
+        </ul>
+        <p>Você será solicitado a criar uma nova senha ao fazer login.</p>
+        <p><a href="${frontendUrl}/login">Acessar o Task Station</a></p>
+        <p>Se você não esperava este email, entre em contato com o administrador.</p>
+      `,
+      text: `Olá, ${name}!\n\nSua conta no Task Station foi criada.\n\nEmail: ${to}\nSenha temporária: ${tempPassword}\n\nVocê será solicitado a criar uma nova senha ao fazer login.\n\nAcesse: ${frontendUrl}/login`,
+    });
+
+    if (error) {
+      this.logger.error(
+        { to, errorCode: error.name, errorMessage: error.message },
+        'Failed to send welcome email',
+      );
+      throw new InternalServerErrorException('Erro ao enviar email de boas-vindas');
+    }
+
+    this.logger.info({ to }, 'Welcome email sent via Resend');
+  }
 }
