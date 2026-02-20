@@ -1,0 +1,196 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum MembershipRole {
+  superuser
+  admin
+  workspace_admin
+  member
+
+  @@map("membership_role")
+}
+
+enum ResourceType {
+  company
+  workspace
+  project
+
+  @@map("resource_type")
+}
+
+enum TaskPriority {
+  low
+  medium
+  high
+  urgent
+
+  @@map("task_priority")
+}
+
+model User {
+  id                 String    @id @default(uuid())
+  email              String    @unique
+  passwordHash       String    @map("password_hash")
+  name               String
+  phone              String?
+  photoUrl           String?   @map("photo_url")
+  isSuperuser        Boolean   @default(false) @map("is_superuser")
+  mustResetPassword  Boolean   @default(true)  @map("must_reset_password")
+  isActive           Boolean   @default(true)  @map("is_active")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt      @map("updated_at")
+  deletedAt          DateTime?                 @map("deleted_at")
+
+  createdCompanies        Company[]            @relation("CompanyCreatedBy")
+  createdWorkspaces       Workspace[]          @relation("WorkspaceCreatedBy")
+  createdProjects         Project[]            @relation("ProjectCreatedBy")
+  reportedTasks           Task[]               @relation("TaskReporter")
+  assignedTasks           Task[]               @relation("TaskAssigned")
+  createdTasks            Task[]               @relation("TaskCreatedBy")
+  memberships             Membership[]
+  passwordResetTokens     PasswordResetToken[]
+
+  @@index([deletedAt])
+  @@map("users")
+}
+
+model Company {
+  id          String    @id @default(uuid())
+  legalName   String    @map("legal_name")
+  taxId       String    @unique @map("tax_id")
+  isActive    Boolean   @default(true) @map("is_active")
+  createdById String    @map("created_by")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt     @map("updated_at")
+  deletedAt   DateTime?                @map("deleted_at")
+
+  createdBy  User        @relation("CompanyCreatedBy", fields: [createdById], references: [id])
+  workspaces Workspace[]
+
+  @@map("companies")
+}
+
+model Workspace {
+  id          String    @id @default(uuid())
+  companyId   String    @map("company_id")
+  name        String
+  description String?
+  isActive    Boolean   @default(true) @map("is_active")
+  createdById String    @map("created_by")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt     @map("updated_at")
+  deletedAt   DateTime?                @map("deleted_at")
+
+  company   Company   @relation(fields: [companyId], references: [id])
+  createdBy User      @relation("WorkspaceCreatedBy", fields: [createdById], references: [id])
+  projects  Project[]
+
+  @@index([companyId])
+  @@map("workspaces")
+}
+
+model Project {
+  id          String    @id @default(uuid())
+  workspaceId String    @map("workspace_id")
+  name        String
+  description String?
+  isActive    Boolean   @default(true) @map("is_active")
+  createdById String    @map("created_by")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt     @map("updated_at")
+  deletedAt   DateTime?                @map("deleted_at")
+
+  workspace     Workspace     @relation(fields: [workspaceId], references: [id])
+  createdBy     User          @relation("ProjectCreatedBy", fields: [createdById], references: [id])
+  columns       Column[]
+  tasks         Task[]
+
+  @@index([workspaceId])
+  @@map("projects")
+}
+
+model Column {
+  id        String    @id @default(uuid())
+  projectId String    @map("project_id")
+  name      String
+  order     Int
+  color     String?
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt     @map("updated_at")
+  deletedAt DateTime?                @map("deleted_at")
+
+  project Project @relation(fields: [projectId], references: [id])
+  tasks   Task[]
+
+  @@index([projectId, order])
+  @@map("columns")
+}
+
+model Task {
+  id         String       @id @default(uuid())
+  projectId  String       @map("project_id")
+  columnId   String       @map("column_id")
+  title      String
+  description String?
+  priority   TaskPriority @default(medium)
+  order      Int
+  reporterId String       @map("reporter_id")
+  assigneeId String?      @map("assignee_id")
+  startDate  DateTime?    @map("start_date")  @db.Date
+  dueDate    DateTime?    @map("due_date")    @db.Date
+  createdById String      @map("created_by")
+  createdAt  DateTime     @default(now()) @map("created_at")
+  updatedAt  DateTime     @updatedAt      @map("updated_at")
+  deletedAt  DateTime?                    @map("deleted_at")
+
+  project    Project  @relation(fields: [projectId],  references: [id])
+  column     Column   @relation(fields: [columnId],   references: [id])
+  reporter   User     @relation("TaskReporter",  fields: [reporterId],  references: [id])
+  assignee   User?    @relation("TaskAssigned",  fields: [assigneeId],  references: [id])
+  createdBy  User     @relation("TaskCreatedBy", fields: [createdById], references: [id])
+
+  @@index([columnId, order])
+  @@index([projectId, deletedAt])
+  @@index([assigneeId])
+  @@index([reporterId])
+  @@index([dueDate])
+  @@map("tasks")
+}
+
+model Membership {
+  id           String         @id @default(uuid())
+  userId       String         @map("user_id")
+  resourceType ResourceType   @map("resource_type")
+  resourceId   String         @map("resource_id")
+  role         MembershipRole
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt     @map("updated_at")
+  deletedAt    DateTime?                     @map("deleted_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, resourceType, resourceId])
+  @@index([resourceType, resourceId])
+  @@map("memberships")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime?                @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, usedAt, expiresAt])
+  @@map("password_reset_tokens")
+}
