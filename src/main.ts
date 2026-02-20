@@ -1,10 +1,14 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+
+  // Substitui o logger padrão do NestJS pelo pino em todo o ciclo de vida
+  app.useLogger(app.get(Logger));
 
   app.setGlobalPrefix('api/v1');
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }));
@@ -21,8 +25,9 @@ async function bootstrap() {
   const port = process.env.PORT ?? 3000;
   await app.listen(port);
 
-  console.log(`Application running on: http://localhost:${port}/api`);
-  console.log(`Swagger UI available at: http://localhost:${port}/api/docs`);
+  const logger = app.get(Logger);
+  logger.log(`Application running on http://localhost:${port}/api/v1`, 'Bootstrap');
+  logger.log(`Swagger UI available at http://localhost:${port}/api/docs`, 'Bootstrap');
 }
 
 // eslint-disable-next-line @typescript-eslint/no-floating-promises
