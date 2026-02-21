@@ -275,6 +275,150 @@ export class SuperadminService {
     return updated;
   }
 
+  async getUserDetail(id: string) {
+    const user = await this.prisma.user.findFirst({
+      where: { id, deletedAt: null },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        isActive: true,
+        isSuperuser: true,
+        mustResetPassword: true,
+        createdAt: true,
+        updatedAt: true,
+        memberships: {
+          where: {
+            deletedAt: null,
+            resourceType: 'company',
+          },
+          select: {
+            id: true,
+            role: true,
+            resourceType: true,
+            resourceId: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Usuário não encontrado');
+    }
+
+    // Buscar dados das empresas vinculadas
+    const companyIds = user.memberships.map((m) => m.resourceId);
+    const companies = await this.prisma.company.findMany({
+      where: { id: { in: companyIds }, deletedAt: null },
+      select: { id: true, legalName: true, taxId: true, isActive: true },
+    });
+
+    const companyMap = new Map(companies.map((c) => [c.id, c]));
+
+    const memberships = user.memberships.map((m) => ({
+      ...m,
+      company: companyMap.get(m.resourceId) ?? null,
+    }));
+
+    return { ...user, memberships };
+  }
+
+  async getCompanyDetail(id: string) {
+    const company = await this.prisma.company.findFirst({
+      where: { id, deletedAt: null },
+      select: {
+        id: true,
+        legalName: true,
+        taxId: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+        createdBy: {
+          select: { id: true, name: true, email: true },
+        },
+      },
+    });
+
+    if (!company) {
+      throw new NotFoundException('Empresa não encontrada');
+    }
+
+    const [admins, workspacesCount, projectsCount] = await Promise.all([
+      this.prisma.membership.findMany({
+        where: {
+          resourceType: 'company',
+          resourceId: id,
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+          role: true,
+          createdAt: true,
+          user: {
+            select: { id: true, name: true, email: true, phone: true, isActive: true },
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.workspace.count({
+        where: { companyId: id, deletedAt: null },
+      }),
+      this.prisma.project.count({
+        where: {
+          workspace: { companyId: id, deletedAt: null },
+          deletedAt: null,
+        },
+      }),
+    ]);
+
+    const adminsFormatted = admins.map((m) => ({
+      membershipId: m.id,
+      role: m.role,
+      createdAt: m.createdAt,
+      user: m.user,
+    }));
+
+    return { ...company, admins: adminsFormatted, workspacesCount, projectsCount };
+  }
+
+  async deactivateMembership(companyId: string, membershipId: string, performedById: string) {
+    const membership = await this.prisma.membership.findFirst({
+      where: { id: membershipId, resourceType: 'company', resourceId: companyId, deletedAt: null },
+    });
+
+    if (!membership) {
+      throw new NotFoundException('Vínculo não encontrado');
+    }
+
+    // Verifica se é o único admin ativo da empresa
+    const activeAdminsCount = await this.prisma.membership.count({
+      where: {
+        resourceType: 'company',
+        resourceId: companyId,
+        deletedAt: null,
+        id: { not: membershipId },
+      },
+    });
+
+    if (activeAdminsCount === 0) {
+      throw new BadRequestException(
+        'Não é possível inativar o único administrador da empresa. Adicione outro administrador primeiro.',
+      );
+    }
+
+    await this.prisma.membership.update({
+      where: { id: membershipId },
+      data: { deletedAt: new Date() },
+    });
+
+    this.logger.info(
+      { companyId, membershipId, performedById },
+      'Company membership deactivated by superadmin',
+    );
+  }
+
   async updateUser(id: string, dto: UpdateUserDto, currentUserId: string) {
     const user = await this.prisma.user.findFirst({
       where: { id, deletedAt: null },

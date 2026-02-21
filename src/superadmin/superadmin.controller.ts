@@ -48,6 +48,14 @@ export class SuperadminController {
     return this.superadminService.listCompanies(query);
   }
 
+  @Get('empresas/:id')
+  @ApiOperation({ summary: 'Detalhes da empresa com admins e métricas' })
+  @ApiResponse({ status: 200, description: 'Detalhes da empresa' })
+  @ApiResponse({ status: 404, description: 'Empresa não encontrada' })
+  getCompanyDetail(@Param('id') id: string) {
+    return this.superadminService.getCompanyDetail(id);
+  }
+
   @Patch('empresas/:id')
   @ApiOperation({ summary: 'Editar razão social ou CNPJ da empresa' })
   @ApiResponse({ status: 200, description: 'Empresa atualizada' })
@@ -55,6 +63,20 @@ export class SuperadminController {
   @ApiResponse({ status: 409, description: 'CNPJ já cadastrado' })
   updateCompany(@Param('id') id: string, @Body() dto: UpdateCompanyDto) {
     return this.superadminService.updateCompany(id, dto);
+  }
+
+  @Patch('empresas/:id/membros/:membershipId/inativar')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Inativar vínculo de admin com empresa' })
+  @ApiResponse({ status: 204, description: 'Vínculo inativado' })
+  @ApiResponse({ status: 400, description: 'Não pode inativar único admin' })
+  @ApiResponse({ status: 404, description: 'Vínculo não encontrado' })
+  async deactivateMembership(
+    @Param('id') id: string,
+    @Param('membershipId') membershipId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    await this.superadminService.deactivateMembership(id, membershipId, user.id);
   }
 
   @Patch('empresas/:id/inativar')
@@ -92,6 +114,14 @@ export class SuperadminController {
   @ApiResponse({ status: 200, description: 'Lista paginada de usuários' })
   listUsers(@Query() query: ListUsersQueryDto) {
     return this.superadminService.listUsers(query);
+  }
+
+  @Get('usuarios/:id')
+  @ApiOperation({ summary: 'Detalhes de um usuário com empresas vinculadas' })
+  @ApiResponse({ status: 200, description: 'Detalhes do usuário' })
+  @ApiResponse({ status: 404, description: 'Usuário não encontrado' })
+  getUserDetail(@Param('id') id: string) {
+    return this.superadminService.getUserDetail(id);
   }
 
   @Patch('usuarios/:id')
