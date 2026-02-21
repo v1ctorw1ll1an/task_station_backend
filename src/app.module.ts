@@ -5,8 +5,10 @@ import { Logger, LoggerModule } from 'nestjs-pino';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { EmpresaModule } from './empresa/empresa.module';
 import { HealthModule } from './health/health.module';
 import { MailerModule } from './mailer/mailer.module';
+import { MeModule } from './me/me.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { SuperadminModule } from './superadmin/superadmin.module';
 
@@ -65,6 +67,8 @@ import { SuperadminModule } from './superadmin/superadmin.module';
     HealthModule,
     AuthModule,
     SuperadminModule,
+    EmpresaModule,
+    MeModule,
   ],
   providers: [
     {
