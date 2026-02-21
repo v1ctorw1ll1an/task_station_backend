@@ -20,6 +20,7 @@ import { CreateCompanyDto } from './dto/create-company.dto';
 import { ListCompaniesQueryDto } from './dto/list-companies-query.dto';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
 import { UpdateCompanyDto } from './dto/update-company.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
 @ApiTags('superadmin')
@@ -72,6 +73,16 @@ export class SuperadminController {
   @ApiResponse({ status: 404, description: 'Empresa não encontrada' })
   async deleteCompany(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     await this.superadminService.deleteCompany(id, user.id);
+  }
+
+  // ── Perfil ───────────────────────────────────────────────────────────────────
+
+  @Patch('perfil')
+  @ApiOperation({ summary: 'Atualizar dados do próprio perfil (superusuário)' })
+  @ApiResponse({ status: 200, description: 'Perfil atualizado' })
+  @ApiResponse({ status: 409, description: 'Email já cadastrado' })
+  updateProfile(@Body() dto: UpdateProfileDto, @CurrentUser() user: AuthUser) {
+    return this.superadminService.updateProfile(user.id, dto);
   }
 
   // ── Usuários ─────────────────────────────────────────────────────────────────

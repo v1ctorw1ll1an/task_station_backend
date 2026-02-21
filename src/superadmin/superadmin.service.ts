@@ -14,6 +14,7 @@ import { CreateCompanyDto } from './dto/create-company.dto';
 import { ListCompaniesQueryDto } from './dto/list-companies-query.dto';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
 import { UpdateCompanyDto } from './dto/update-company.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
 @Injectable()
@@ -230,6 +231,50 @@ export class SuperadminService {
     return { data: users, total, page, limit };
   }
 
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, deletedAt: null },
+    });
+    if (!user) {
+      throw new NotFoundException('Usuário não encontrado');
+    }
+
+    if (dto.email && dto.email !== user.email) {
+      const conflict = await this.prisma.user.findFirst({
+        where: { email: dto.email, deletedAt: null, id: { not: userId } },
+      });
+      if (conflict) {
+        throw new ConflictException('Já existe um usuário com este email');
+      }
+    }
+
+    const { password, ...rest } = dto;
+    const data: Record<string, unknown> = { ...rest };
+
+    if (password) {
+      data.passwordHash = await bcrypt.hash(password, 10);
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        isActive: true,
+        isSuperuser: true,
+        mustResetPassword: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    this.logger.info({ userId, changes: Object.keys(dto) }, 'Superuser updated own profile');
+    return updated;
+  }
+
   async updateUser(id: string, dto: UpdateUserDto, currentUserId: string) {
     const user = await this.prisma.user.findFirst({
       where: { id, deletedAt: null },
@@ -242,13 +287,31 @@ export class SuperadminService {
       throw new BadRequestException('Não é possível alterar o próprio usuário');
     }
 
+    if (dto.email && dto.email !== user.email) {
+      const conflict = await this.prisma.user.findFirst({
+        where: { email: dto.email, deletedAt: null, id: { not: id } },
+      });
+      if (conflict) {
+        throw new ConflictException('Já existe um usuário com este email');
+      }
+    }
+
+    const { password, ...rest } = dto;
+    const data: Record<string, unknown> = { ...rest };
+
+    if (password) {
+      data.passwordHash = await bcrypt.hash(password, 10);
+      data.mustResetPassword = true;
+    }
+
     const updated = await this.prisma.user.update({
       where: { id },
-      data: dto,
+      data,
       select: {
         id: true,
         name: true,
         email: true,
+        phone: true,
         isActive: true,
         isSuperuser: true,
         mustResetPassword: true,
@@ -259,7 +322,7 @@ export class SuperadminService {
     });
 
     this.logger.info(
-      { targetUserId: id, changes: dto, performedById: currentUserId },
+      { targetUserId: id, changes: Object.keys(dto), performedById: currentUserId },
       'User updated by superadmin',
     );
     return updated;
