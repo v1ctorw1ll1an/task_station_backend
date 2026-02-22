@@ -47,10 +47,7 @@ export class EmpresaController {
   @Get('workspaces')
   @ApiOperation({ summary: 'Listar workspaces da empresa com filtros e paginação' })
   @ApiResponse({ status: 200, description: 'Lista paginada de workspaces' })
-  listWorkspaces(
-    @Param('companyId') companyId: string,
-    @Query() query: ListWorkspacesQueryDto,
-  ) {
+  listWorkspaces(@Param('companyId') companyId: string, @Query() query: ListWorkspacesQueryDto) {
     return this.empresaService.listWorkspaces(companyId, query);
   }
 
@@ -58,10 +55,7 @@ export class EmpresaController {
   @ApiOperation({ summary: 'Detalhes de um workspace' })
   @ApiResponse({ status: 200, description: 'Workspace encontrado' })
   @ApiResponse({ status: 404, description: 'Workspace não encontrado' })
-  getWorkspace(
-    @Param('companyId') companyId: string,
-    @Param('workspaceId') workspaceId: string,
-  ) {
+  getWorkspace(@Param('companyId') companyId: string, @Param('workspaceId') workspaceId: string) {
     return this.empresaService.getWorkspace(companyId, workspaceId);
   }
 
@@ -88,6 +82,17 @@ export class EmpresaController {
     return this.empresaService.deactivateWorkspace(companyId, workspaceId);
   }
 
+  @Patch('workspaces/:workspaceId/ativar')
+  @ApiOperation({ summary: 'Reativar workspace' })
+  @ApiResponse({ status: 200, description: 'Workspace reativado' })
+  @ApiResponse({ status: 404, description: 'Workspace não encontrado' })
+  activateWorkspace(
+    @Param('companyId') companyId: string,
+    @Param('workspaceId') workspaceId: string,
+  ) {
+    return this.empresaService.activateWorkspace(companyId, workspaceId);
+  }
+
   @Delete('workspaces/:workspaceId')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Soft delete de workspace' })
@@ -106,10 +111,7 @@ export class EmpresaController {
   @Get('membros')
   @ApiOperation({ summary: 'Listar membros da empresa com filtros e paginação' })
   @ApiResponse({ status: 200, description: 'Lista paginada de membros' })
-  listMembers(
-    @Param('companyId') companyId: string,
-    @Query() query: ListMembersQueryDto,
-  ) {
+  listMembers(@Param('companyId') companyId: string, @Query() query: ListMembersQueryDto) {
     return this.empresaService.listMembers(companyId, query);
   }
 
@@ -125,6 +127,20 @@ export class EmpresaController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.empresaService.updateMember(companyId, userId, dto, user.id);
+  }
+
+  @Delete('membros/:userId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Remover membro da empresa e de todos os seus workspaces' })
+  @ApiResponse({ status: 204, description: 'Membro removido' })
+  @ApiResponse({ status: 400, description: 'Não é possível remover a si mesmo' })
+  @ApiResponse({ status: 404, description: 'Membro não encontrado' })
+  async removeMember(
+    @Param('companyId') companyId: string,
+    @Param('userId') userId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    await this.empresaService.removeMember(companyId, userId, user.id);
   }
 
   // ── Admins ────────────────────────────────────────────────────────────────────
@@ -145,7 +161,7 @@ export class EmpresaController {
 
   @Delete('admins/:userId')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Revogar papel de administrador' })
+  @ApiOperation({ summary: 'Revogar papel de administrador da empresa' })
   @ApiResponse({ status: 204, description: 'Papel de admin revogado' })
   @ApiResponse({ status: 400, description: 'Não pode revogar o único admin ou o próprio papel' })
   @ApiResponse({ status: 404, description: 'Admin não encontrado' })
@@ -155,5 +171,44 @@ export class EmpresaController {
     @CurrentUser() user: AuthUser,
   ) {
     await this.empresaService.revokeAdmin(companyId, userId, user.id);
+  }
+
+  // ── Papéis por membro ─────────────────────────────────────────────────────────
+
+  @Get('membros/:userId/papeis')
+  @ApiOperation({ summary: 'Listar todos os papéis de um membro (empresa + workspaces)' })
+  @ApiResponse({ status: 200, description: 'Papéis do membro' })
+  @ApiResponse({ status: 404, description: 'Usuário não encontrado' })
+  getMemberRoles(@Param('companyId') companyId: string, @Param('userId') userId: string) {
+    return this.empresaService.getMemberRoles(companyId, userId);
+  }
+
+  @Post('workspaces/:workspaceId/admins')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Promover usuário a workspace_admin' })
+  @ApiResponse({ status: 201, description: 'Usuário promovido a workspace_admin' })
+  @ApiResponse({ status: 404, description: 'Workspace ou usuário não encontrado' })
+  @ApiResponse({ status: 409, description: 'Usuário já é workspace_admin' })
+  promoteToWorkspaceAdmin(
+    @Param('companyId') companyId: string,
+    @Param('workspaceId') workspaceId: string,
+    @Body() dto: PromoteMemberDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.empresaService.promoteToWorkspaceAdmin(companyId, workspaceId, dto.userId, user.id);
+  }
+
+  @Delete('workspaces/:workspaceId/admins/:userId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Revogar papel de workspace_admin' })
+  @ApiResponse({ status: 204, description: 'Papel de workspace_admin revogado' })
+  @ApiResponse({ status: 404, description: 'Admin de workspace não encontrado' })
+  async revokeWorkspaceAdmin(
+    @Param('companyId') companyId: string,
+    @Param('workspaceId') workspaceId: string,
+    @Param('userId') userId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    await this.empresaService.revokeWorkspaceAdmin(companyId, workspaceId, userId, user.id);
   }
 }

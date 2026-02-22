@@ -1,10 +1,12 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   Param,
   Post,
+  Query,
   Request,
   UseGuards,
 } from '@nestjs/common';
@@ -12,6 +14,7 @@ import { ApiBearerAuth, ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nes
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { Public } from './decorators/public.decorator';
+import { ConsumeFirstAccessDto } from './dto/consume-first-access.dto';
 import { ConfirmResetPasswordDto } from './dto/confirm-reset-password.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { LoginDto } from './dto/login.dto';
@@ -80,5 +83,24 @@ export class AuthController {
   async confirmResetPassword(@Param('token') token: string, @Body() dto: ConfirmResetPasswordDto) {
     await this.authService.confirmResetPassword(token, dto);
     return { message: 'ok' };
+  }
+
+  @Public()
+  @Get('first-access')
+  @ApiOperation({ summary: 'Validar token de primeiro acesso (sem consumir)' })
+  @ApiResponse({ status: 200, description: 'Token válido — retorna email do usuário' })
+  @ApiResponse({ status: 400, description: 'Token inválido ou expirado' })
+  async validateFirstAccessToken(@Query('token') token: string) {
+    return this.authService.validateFirstAccessToken(token);
+  }
+
+  @Public()
+  @Post('first-access')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Consumir token de primeiro acesso — define nome e senha, retorna JWT' })
+  @ApiResponse({ status: 200, description: 'Primeiro acesso concluído — JWT retornado' })
+  @ApiResponse({ status: 400, description: 'Token inválido ou expirado / senhas não coincidem' })
+  async consumeFirstAccessToken(@Query('token') token: string, @Body() dto: ConsumeFirstAccessDto) {
+    return this.authService.consumeFirstAccessToken(token, dto);
   }
 }

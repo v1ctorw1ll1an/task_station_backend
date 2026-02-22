@@ -74,4 +74,29 @@ export class MailerService {
 
     this.logger.info({ to }, 'Welcome email sent via Resend');
   }
+
+  async sendFirstAccessEmail(to: string, name: string, magicLink: string): Promise<void> {
+    const { error } = await this.resend.emails.send({
+      from: this.from,
+      to,
+      subject: 'Bem-vindo ao Task Station — Acesse sua conta',
+      html: `
+        <p>Olá, <strong>${name}</strong>!</p>
+        <p>Sua conta no <strong>Task Station</strong> foi criada. Clique no link abaixo para definir sua senha e acessar o sistema.</p>
+        <p><a href="${magicLink}">Acessar o Task Station</a></p>
+        <p>O link expira em <strong>7 dias</strong>. Se você não esperava este email, entre em contato com o administrador.</p>
+      `,
+      text: `Olá, ${name}!\n\nSua conta no Task Station foi criada.\n\nClique no link abaixo para definir sua senha (expira em 7 dias):\n${magicLink}\n\nSe você não esperava este email, entre em contato com o administrador.`,
+    });
+
+    if (error) {
+      this.logger.error(
+        { to, errorCode: error.name, errorMessage: error.message },
+        'Failed to send first access email',
+      );
+      throw new InternalServerErrorException('Erro ao enviar email de primeiro acesso');
+    }
+
+    this.logger.info({ to }, 'First access email sent via Resend');
+  }
 }

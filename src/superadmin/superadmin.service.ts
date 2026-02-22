@@ -6,8 +6,10 @@ import {
 } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
+import { ConfigService } from '@nestjs/config';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Prisma } from '../generated/prisma/client';
+import { AuthService } from '../auth/auth.service';
 import { MailerService } from '../mailer/mailer.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCompanyDto } from './dto/create-company.dto';
@@ -22,6 +24,8 @@ export class SuperadminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mailerService: MailerService,
+    private readonly authService: AuthService,
+    private readonly configService: ConfigService,
     @InjectPinoLogger(SuperadminService.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -37,12 +41,8 @@ export class SuperadminService {
     const existingUser = await this.prisma.user.findFirst({
       where: { email: dto.adminEmail, deletedAt: null },
     });
-    if (existingUser) {
-      throw new ConflictException('Já existe um usuário com este email');
-    }
 
-    const tempPassword = crypto.randomBytes(12).toString('hex');
-    const passwordHash = await bcrypt.hash(tempPassword, 10);
+    let isNewUser = false;
 
     const result = await this.prisma.$transaction(async (tx) => {
       const company = await tx.company.create({
@@ -53,14 +53,24 @@ export class SuperadminService {
         },
       });
 
-      const admin = await tx.user.create({
-        data: {
-          name: dto.adminName,
-          email: dto.adminEmail,
-          passwordHash,
-          mustResetPassword: true,
-        },
-      });
+      let admin: { id: string; name: string; email: string };
+
+      if (existingUser) {
+        admin = existingUser;
+      } else {
+        isNewUser = true;
+        const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
+        const tempName = dto.adminName ?? dto.adminEmail.split('@')[0];
+        admin = await tx.user.create({
+          data: {
+            name: tempName,
+            email: dto.adminEmail,
+            passwordHash: placeholderHash,
+            mustResetPassword: true,
+          },
+          select: { id: true, name: true, email: true },
+        });
+      }
 
       await tx.membership.create({
         data: {
@@ -74,14 +84,22 @@ export class SuperadminService {
       return { company, admin };
     });
 
-    this.mailerService
-      .sendWelcomeEmail(dto.adminEmail, dto.adminName, tempPassword)
-      .catch((err: unknown) => {
-        this.logger.error(
-          { adminEmail: dto.adminEmail, err },
-          'Failed to send welcome email — company was created successfully',
-        );
-      });
+    let magicLink: string | null = null;
+
+    if (isNewUser) {
+      const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
+      const rawToken = await this.authService.generateFirstAccessToken(result.admin.id);
+      magicLink = `${frontendUrl}/first-access?token=${rawToken}`;
+
+      this.mailerService
+        .sendFirstAccessEmail(dto.adminEmail, result.admin.name, magicLink)
+        .catch((err: unknown) => {
+          this.logger.error(
+            { adminEmail: dto.adminEmail, err },
+            'Failed to send first access email — company was created successfully',
+          );
+        });
+    }
 
     this.logger.info(
       {
@@ -89,13 +107,17 @@ export class SuperadminService {
         adminId: result.admin.id,
         adminEmail: dto.adminEmail,
         createdById,
+        isNewUser,
       },
       'Company created with admin',
     );
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { passwordHash: _ph, ...adminWithoutPassword } = result.admin;
-    return { company: result.company, admin: adminWithoutPassword };
+    return {
+      company: result.company,
+      admin: result.admin,
+      emailSent: isNewUser,
+      magicLink,
+    };
   }
 
   async listCompanies(query: ListCompaniesQueryDto) {
@@ -470,5 +492,20 @@ export class SuperadminService {
       'User updated by superadmin',
     );
     return updated;
+  }
+
+  async invalidateUserCredentials(targetUserId: string, performedById: string) {
+    const rawToken = await this.authService.invalidateUserCredentials(targetUserId, performedById);
+    const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
+    return { magicLink: `${frontendUrl}/first-access?token=${rawToken}` };
+  }
+
+  async getMagicLink(targetUserId: string) {
+    const rawToken = await this.authService.getOrRegenerateFirstAccessToken(targetUserId);
+    if (!rawToken) {
+      return { magicLink: null };
+    }
+    const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
+    return { magicLink: `${frontendUrl}/first-access?token=${rawToken}` };
   }
 }

@@ -132,4 +132,24 @@ export class SuperadminController {
   updateUser(@Param('id') id: string, @Body() dto: UpdateUserDto, @CurrentUser() user: AuthUser) {
     return this.superadminService.updateUser(id, dto, user.id);
   }
+
+  @Post('usuarios/:id/invalidar-credenciais')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Invalidar credenciais do usuário e gerar novo magic link' })
+  @ApiResponse({ status: 200, description: 'Credenciais invalidadas — magic link gerado' })
+  @ApiResponse({ status: 404, description: 'Usuário não encontrado' })
+  invalidateUserCredentials(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.superadminService.invalidateUserCredentials(id, user.id);
+  }
+
+  @Get('usuarios/:id/magic-link')
+  @ApiOperation({ summary: 'Obter (ou regenerar) magic link de primeiro acesso do usuário' })
+  @ApiResponse({
+    status: 200,
+    description: 'Magic link — null se usuário não tem mustResetPassword',
+  })
+  @ApiResponse({ status: 404, description: 'Usuário não encontrado' })
+  getMagicLink(@Param('id') id: string) {
+    return this.superadminService.getMagicLink(id);
+  }
 }
