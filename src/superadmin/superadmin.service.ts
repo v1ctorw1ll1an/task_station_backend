@@ -11,7 +11,7 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Prisma } from '../generated/prisma/client';
 import { AuthService } from '../auth/auth.service';
 import { MailerService } from '../mailer/mailer.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { SuperadminRepository } from './superadmin.repository';
 import { CreateCompanyDto } from './dto/create-company.dto';
 import { ListCompaniesQueryDto } from './dto/list-companies-query.dto';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
@@ -22,7 +22,7 @@ import { UpdateUserDto } from './dto/update-user.dto';
 @Injectable()
 export class SuperadminService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly repo: SuperadminRepository,
     private readonly mailerService: MailerService,
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
@@ -31,68 +31,49 @@ export class SuperadminService {
   ) {}
 
   async createCompany(dto: CreateCompanyDto, createdById: string) {
-    const existingCompany = await this.prisma.company.findFirst({
-      where: { taxId: dto.taxId, deletedAt: null },
-    });
+    const existingCompany = await this.repo.findCompanyByTaxId(dto.taxId);
     if (existingCompany) {
       throw new ConflictException('Já existe uma empresa com este CNPJ');
     }
 
-    const existingUser = await this.prisma.user.findFirst({
-      where: { email: dto.adminEmail, deletedAt: null },
-    });
+    const existingUser = await this.repo.findUserByEmail(dto.adminEmail);
 
+    let company: { id: string; legalName: string; taxId: string };
+    let admin: { id: string; name: string; email: string };
     let isNewUser = false;
 
-    const result = await this.prisma.$transaction(async (tx) => {
-      const company = await tx.company.create({
-        data: {
-          legalName: dto.legalName,
-          taxId: dto.taxId,
-          createdById,
+    if (existingUser) {
+      company = await this.repo.createCompanyWithAdmin(
+        { legalName: dto.legalName, taxId: dto.taxId, createdById },
+        existingUser.id,
+      );
+      admin = existingUser;
+    } else {
+      isNewUser = true;
+      const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
+      const tempName = dto.adminName ?? dto.adminEmail.split('@')[0];
+      const result = await this.repo.createCompanyWithNewAdmin(
+        { legalName: dto.legalName, taxId: dto.taxId, createdById },
+        {
+          name: tempName,
+          email: dto.adminEmail,
+          passwordHash: placeholderHash,
+          mustResetPassword: true,
         },
-      });
-
-      let admin: { id: string; name: string; email: string };
-
-      if (existingUser) {
-        admin = existingUser;
-      } else {
-        isNewUser = true;
-        const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
-        const tempName = dto.adminName ?? dto.adminEmail.split('@')[0];
-        admin = await tx.user.create({
-          data: {
-            name: tempName,
-            email: dto.adminEmail,
-            passwordHash: placeholderHash,
-            mustResetPassword: true,
-          },
-          select: { id: true, name: true, email: true },
-        });
-      }
-
-      await tx.membership.create({
-        data: {
-          userId: admin.id,
-          resourceType: 'company',
-          resourceId: company.id,
-          role: 'admin',
-        },
-      });
-
-      return { company, admin };
-    });
+      );
+      company = result.company;
+      admin = result.admin;
+    }
 
     let magicLink: string | null = null;
 
     if (isNewUser) {
       const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
-      const rawToken = await this.authService.generateFirstAccessToken(result.admin.id);
+      const rawToken = await this.authService.generateFirstAccessToken(admin.id);
       magicLink = `${frontendUrl}/first-access?token=${rawToken}`;
 
       this.mailerService
-        .sendFirstAccessEmail(dto.adminEmail, result.admin.name, magicLink)
+        .sendFirstAccessEmail(dto.adminEmail, admin.name, magicLink)
         .catch((err: unknown) => {
           this.logger.error(
             { adminEmail: dto.adminEmail, err },
@@ -103,8 +84,8 @@ export class SuperadminService {
 
     this.logger.info(
       {
-        companyId: result.company.id,
-        adminId: result.admin.id,
+        companyId: company.id,
+        adminId: admin.id,
         adminEmail: dto.adminEmail,
         createdById,
         isNewUser,
@@ -112,20 +93,13 @@ export class SuperadminService {
       'Company created with admin',
     );
 
-    return {
-      company: result.company,
-      admin: result.admin,
-      emailSent: isNewUser,
-      magicLink,
-    };
+    return { company, admin, emailSent: isNewUser, magicLink };
   }
 
   async listCompanies(query: ListCompaniesQueryDto) {
     const { search, isActive, page = 1, limit = 20 } = query;
 
-    const where: Prisma.CompanyWhereInput = {
-      deletedAt: null,
-    };
+    const where: Prisma.CompanyWhereInput = { deletedAt: null };
 
     if (search) {
       where.OR = [
@@ -138,84 +112,53 @@ export class SuperadminService {
       where.isActive = isActive;
     }
 
-    const [data, total] = await Promise.all([
-      this.prisma.company.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.company.count({ where }),
-    ]);
-
+    const [data, total] = await this.repo.findCompanies(where, page, limit);
     return { data, total, page, limit };
   }
 
   async updateCompany(id: string, dto: UpdateCompanyDto) {
-    const company = await this.prisma.company.findFirst({
-      where: { id, deletedAt: null },
-    });
+    const company = await this.repo.findCompanyById(id);
     if (!company) {
       throw new NotFoundException('Empresa não encontrada');
     }
 
     if (dto.taxId && dto.taxId !== company.taxId) {
-      const conflict = await this.prisma.company.findFirst({
-        where: { taxId: dto.taxId, deletedAt: null, id: { not: id } },
-      });
+      const conflict = await this.repo.findCompanyByTaxIdExcluding(dto.taxId, id);
       if (conflict) {
         throw new ConflictException('Já existe uma empresa com este CNPJ');
       }
     }
 
-    const updated = await this.prisma.company.update({
-      where: { id },
-      data: dto,
-    });
-
+    const updated = await this.repo.updateCompany(id, dto);
     this.logger.info({ companyId: id, changes: dto }, 'Company updated');
     return updated;
   }
 
   async deactivateCompany(id: string, performedById: string) {
-    const company = await this.prisma.company.findFirst({
-      where: { id, deletedAt: null },
-    });
+    const company = await this.repo.findCompanyById(id);
     if (!company) {
       throw new NotFoundException('Empresa não encontrada');
     }
 
-    const updated = await this.prisma.company.update({
-      where: { id },
-      data: { isActive: false },
-    });
-
+    const updated = await this.repo.updateCompany(id, { isActive: false });
     this.logger.info({ companyId: id, performedById }, 'Company deactivated');
     return updated;
   }
 
   async deleteCompany(id: string, performedById: string) {
-    const company = await this.prisma.company.findFirst({
-      where: { id, deletedAt: null },
-    });
+    const company = await this.repo.findCompanyById(id);
     if (!company) {
       throw new NotFoundException('Empresa não encontrada');
     }
 
-    await this.prisma.company.update({
-      where: { id },
-      data: { deletedAt: new Date() },
-    });
-
+    await this.repo.updateCompany(id, { deletedAt: new Date() });
     this.logger.info({ companyId: id, performedById }, 'Company soft-deleted');
   }
 
   async listUsers(query: ListUsersQueryDto) {
     const { search, isActive, page = 1, limit = 20 } = query;
 
-    const where: Prisma.UserWhereInput = {
-      deletedAt: null,
-    };
+    const where: Prisma.UserWhereInput = { deletedAt: null };
 
     if (search) {
       where.OR = [
@@ -228,43 +171,18 @@ export class SuperadminService {
       where.isActive = isActive;
     }
 
-    const [users, total] = await Promise.all([
-      this.prisma.user.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          phone: true,
-          isActive: true,
-          isSuperuser: true,
-          mustResetPassword: true,
-          createdAt: true,
-          updatedAt: true,
-          deletedAt: true,
-        },
-      }),
-      this.prisma.user.count({ where }),
-    ]);
-
+    const [users, total] = await this.repo.findUsers(where, page, limit);
     return { data: users, total, page, limit };
   }
 
   async updateProfile(userId: string, dto: UpdateProfileDto) {
-    const user = await this.prisma.user.findFirst({
-      where: { id: userId, deletedAt: null },
-    });
+    const user = await this.repo.findUserById(userId);
     if (!user) {
       throw new NotFoundException('Usuário não encontrado');
     }
 
     if (dto.email && dto.email !== user.email) {
-      const conflict = await this.prisma.user.findFirst({
-        where: { email: dto.email, deletedAt: null, id: { not: userId } },
-      });
+      const conflict = await this.repo.findUserByEmailExcluding(dto.email, userId);
       if (conflict) {
         throw new ConflictException('Já existe um usuário com este email');
       }
@@ -277,65 +195,20 @@ export class SuperadminService {
       data.passwordHash = await bcrypt.hash(password, 10);
     }
 
-    const updated = await this.prisma.user.update({
-      where: { id: userId },
-      data,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        isActive: true,
-        isSuperuser: true,
-        mustResetPassword: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
-
+    const updated = await this.repo.updateProfile(userId, data);
     this.logger.info({ userId, changes: Object.keys(dto) }, 'Superuser updated own profile');
     return updated;
   }
 
   async getUserDetail(id: string) {
-    const user = await this.prisma.user.findFirst({
-      where: { id, deletedAt: null },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        isActive: true,
-        isSuperuser: true,
-        mustResetPassword: true,
-        createdAt: true,
-        updatedAt: true,
-        memberships: {
-          where: {
-            deletedAt: null,
-            resourceType: 'company',
-          },
-          select: {
-            id: true,
-            role: true,
-            resourceType: true,
-            resourceId: true,
-            createdAt: true,
-          },
-        },
-      },
-    });
+    const user = await this.repo.findUserDetail(id);
 
     if (!user) {
       throw new NotFoundException('Usuário não encontrado');
     }
 
-    // Buscar dados das empresas vinculadas
     const companyIds = user.memberships.map((m) => m.resourceId);
-    const companies = await this.prisma.company.findMany({
-      where: { id: { in: companyIds }, deletedAt: null },
-      select: { id: true, legalName: true, taxId: true, isActive: true },
-    });
+    const companies = await this.repo.findCompaniesByIds(companyIds);
 
     const companyMap = new Map(companies.map((c) => [c.id, c]));
 
@@ -348,51 +221,16 @@ export class SuperadminService {
   }
 
   async getCompanyDetail(id: string) {
-    const company = await this.prisma.company.findFirst({
-      where: { id, deletedAt: null },
-      select: {
-        id: true,
-        legalName: true,
-        taxId: true,
-        isActive: true,
-        createdAt: true,
-        updatedAt: true,
-        createdBy: {
-          select: { id: true, name: true, email: true },
-        },
-      },
-    });
+    const company = await this.repo.findCompanyDetail(id);
 
     if (!company) {
       throw new NotFoundException('Empresa não encontrada');
     }
 
     const [admins, workspacesCount, projectsCount] = await Promise.all([
-      this.prisma.membership.findMany({
-        where: {
-          resourceType: 'company',
-          resourceId: id,
-          deletedAt: null,
-        },
-        select: {
-          id: true,
-          role: true,
-          createdAt: true,
-          user: {
-            select: { id: true, name: true, email: true, phone: true, isActive: true },
-          },
-        },
-        orderBy: { createdAt: 'asc' },
-      }),
-      this.prisma.workspace.count({
-        where: { companyId: id, deletedAt: null },
-      }),
-      this.prisma.project.count({
-        where: {
-          workspace: { companyId: id, deletedAt: null },
-          deletedAt: null,
-        },
-      }),
+      this.repo.findCompanyMemberships(id),
+      this.repo.countWorkspacesByCompany(id),
+      this.repo.countProjectsByCompany(id),
     ]);
 
     const adminsFormatted = admins.map((m) => ({
@@ -406,22 +244,22 @@ export class SuperadminService {
   }
 
   async deactivateMembership(companyId: string, membershipId: string, performedById: string) {
-    const membership = await this.prisma.membership.findFirst({
-      where: { id: membershipId, resourceType: 'company', resourceId: companyId, deletedAt: null },
+    const membership = await this.repo.findMembership({
+      id: membershipId,
+      resourceType: 'company',
+      resourceId: companyId,
+      deletedAt: null,
     });
 
     if (!membership) {
       throw new NotFoundException('Vínculo não encontrado');
     }
 
-    // Verifica se é o único admin ativo da empresa
-    const activeAdminsCount = await this.prisma.membership.count({
-      where: {
-        resourceType: 'company',
-        resourceId: companyId,
-        deletedAt: null,
-        id: { not: membershipId },
-      },
+    const activeAdminsCount = await this.repo.countMemberships({
+      resourceType: 'company',
+      resourceId: companyId,
+      deletedAt: null,
+      id: { not: membershipId },
     });
 
     if (activeAdminsCount === 0) {
@@ -430,10 +268,7 @@ export class SuperadminService {
       );
     }
 
-    await this.prisma.membership.update({
-      where: { id: membershipId },
-      data: { deletedAt: new Date() },
-    });
+    await this.repo.updateMembership(membershipId, { deletedAt: new Date() });
 
     this.logger.info(
       { companyId, membershipId, performedById },
@@ -442,9 +277,7 @@ export class SuperadminService {
   }
 
   async updateUser(id: string, dto: UpdateUserDto, currentUserId: string) {
-    const user = await this.prisma.user.findFirst({
-      where: { id, deletedAt: null },
-    });
+    const user = await this.repo.findUserById(id);
     if (!user) {
       throw new NotFoundException('Usuário não encontrado');
     }
@@ -454,9 +287,7 @@ export class SuperadminService {
     }
 
     if (dto.email && dto.email !== user.email) {
-      const conflict = await this.prisma.user.findFirst({
-        where: { email: dto.email, deletedAt: null, id: { not: id } },
-      });
+      const conflict = await this.repo.findUserByEmailExcluding(dto.email, id);
       if (conflict) {
         throw new ConflictException('Já existe um usuário com este email');
       }
@@ -470,22 +301,7 @@ export class SuperadminService {
       data.mustResetPassword = true;
     }
 
-    const updated = await this.prisma.user.update({
-      where: { id },
-      data,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        isActive: true,
-        isSuperuser: true,
-        mustResetPassword: true,
-        createdAt: true,
-        updatedAt: true,
-        deletedAt: true,
-      },
-    });
+    const updated = await this.repo.updateUser(id, data);
 
     this.logger.info(
       { targetUserId: id, changes: Object.keys(dto), performedById: currentUserId },

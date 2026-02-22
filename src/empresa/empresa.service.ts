@@ -6,13 +6,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ResourceType } from '../generated/prisma/client';
+import { MembershipRole, ResourceType } from '../generated/prisma/client';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { AuthService } from '../auth/auth.service';
 import { MailerService } from '../mailer/mailer.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { EmpresaRepository } from './empresa.repository';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { ListMembersQueryDto } from './dto/list-members-query.dto';
 import { ListWorkspacesQueryDto } from './dto/list-workspaces-query.dto';
@@ -22,7 +22,7 @@ import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 @Injectable()
 export class EmpresaService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly repo: EmpresaRepository,
     private readonly mailerService: MailerService,
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
@@ -33,48 +33,21 @@ export class EmpresaService {
   // ── Workspaces ────────────────────────────────────────────────────────────────
 
   async createWorkspace(companyId: string, dto: CreateWorkspaceDto, createdById: string) {
-    const existingUser = await this.prisma.user.findFirst({
-      where: { email: dto.adminEmail, deletedAt: null },
-    });
+    const existingUser = await this.repo.findUserByEmail(dto.adminEmail);
 
     if (!existingUser) {
       // Caso 1: email novo no sistema — criar usuário + vincular à empresa + vincular ao workspace
       const tempName = dto.adminEmail.split('@')[0];
       const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
 
-      const result = await this.prisma.$transaction(async (tx) => {
-        const workspace = await tx.workspace.create({
-          data: { name: dto.name, description: dto.description, companyId, createdById },
-        });
-
-        const admin = await tx.user.create({
-          data: {
-            name: tempName,
-            email: dto.adminEmail,
-            passwordHash: placeholderHash,
-            mustResetPassword: true,
-          },
-        });
-
-        await tx.membership.create({
-          data: {
-            userId: admin.id,
-            resourceType: 'company',
-            resourceId: companyId,
-            role: 'member',
-          },
-        });
-
-        await tx.membership.create({
-          data: {
-            userId: admin.id,
-            resourceType: 'workspace',
-            resourceId: workspace.id,
-            role: 'workspace_admin',
-          },
-        });
-
-        return { workspace, admin };
+      const result = await this.repo.createWorkspaceWithNewAdmin({
+        workspaceName: dto.name,
+        workspaceDescription: dto.description,
+        companyId,
+        createdById,
+        adminEmail: dto.adminEmail,
+        adminName: tempName,
+        adminPasswordHash: placeholderHash,
       });
 
       const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
@@ -101,21 +74,12 @@ export class EmpresaService {
     }
 
     // Caso 2: email já existe no sistema — vincular diretamente ao workspace como workspace_admin
-    const workspace = await this.prisma.$transaction(async (tx) => {
-      const ws = await tx.workspace.create({
-        data: { name: dto.name, description: dto.description, companyId, createdById },
-      });
-
-      await tx.membership.create({
-        data: {
-          userId: existingUser.id,
-          resourceType: 'workspace',
-          resourceId: ws.id,
-          role: 'workspace_admin',
-        },
-      });
-
-      return ws;
+    const workspace = await this.repo.createWorkspaceWithExistingAdmin({
+      workspaceName: dto.name,
+      workspaceDescription: dto.description,
+      companyId,
+      createdById,
+      adminUserId: existingUser.id,
     });
 
     this.logger.info(
@@ -131,49 +95,21 @@ export class EmpresaService {
   async listWorkspaces(companyId: string, query: ListWorkspacesQueryDto) {
     const { isActive, page = 1, limit = 20 } = query;
 
-    const where: {
-      companyId: string;
-      deletedAt: null;
-      isActive?: boolean;
-    } = { companyId, deletedAt: null };
+    const where: { companyId: string; deletedAt: null; isActive?: boolean } = {
+      companyId,
+      deletedAt: null,
+    };
 
     if (isActive !== undefined) {
       where.isActive = isActive;
     }
 
-    const [data, total] = await Promise.all([
-      this.prisma.workspace.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-        select: {
-          id: true,
-          name: true,
-          description: true,
-          isActive: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-      }),
-      this.prisma.workspace.count({ where }),
-    ]);
-
+    const [data, total] = await this.repo.findWorkspaces(where, page, limit);
     return { data, total, page, limit };
   }
 
   async getWorkspace(companyId: string, workspaceId: string) {
-    const workspace = await this.prisma.workspace.findFirst({
-      where: { id: workspaceId, companyId, deletedAt: null },
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        isActive: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
+    const workspace = await this.repo.findWorkspaceByIdSelect(workspaceId, companyId);
 
     if (!workspace) {
       throw new NotFoundException('Workspace não encontrado');
@@ -183,97 +119,49 @@ export class EmpresaService {
   }
 
   async updateWorkspace(companyId: string, workspaceId: string, dto: UpdateWorkspaceDto) {
-    const workspace = await this.prisma.workspace.findFirst({
-      where: { id: workspaceId, companyId, deletedAt: null },
-    });
+    const workspace = await this.repo.findWorkspaceById(workspaceId, companyId);
 
     if (!workspace) {
       throw new NotFoundException('Workspace não encontrado');
     }
 
-    const updated = await this.prisma.workspace.update({
-      where: { id: workspaceId },
-      data: dto,
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        isActive: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
-
+    const updated = await this.repo.updateWorkspace(workspaceId, dto);
     this.logger.info({ companyId, workspaceId, changes: dto }, 'Workspace updated');
     return updated;
   }
 
   async deactivateWorkspace(companyId: string, workspaceId: string) {
-    const workspace = await this.prisma.workspace.findFirst({
-      where: { id: workspaceId, companyId, deletedAt: null },
-    });
+    const workspace = await this.repo.findWorkspaceById(workspaceId, companyId);
 
     if (!workspace) {
       throw new NotFoundException('Workspace não encontrado');
     }
 
-    const updated = await this.prisma.workspace.update({
-      where: { id: workspaceId },
-      data: { isActive: false },
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        isActive: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
-
+    const updated = await this.repo.updateWorkspace(workspaceId, { isActive: false });
     this.logger.info({ companyId, workspaceId }, 'Workspace deactivated');
     return updated;
   }
 
   async activateWorkspace(companyId: string, workspaceId: string) {
-    const workspace = await this.prisma.workspace.findFirst({
-      where: { id: workspaceId, companyId, deletedAt: null },
-    });
+    const workspace = await this.repo.findWorkspaceById(workspaceId, companyId);
 
     if (!workspace) {
       throw new NotFoundException('Workspace não encontrado');
     }
 
-    const updated = await this.prisma.workspace.update({
-      where: { id: workspaceId },
-      data: { isActive: true },
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        isActive: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
-
+    const updated = await this.repo.updateWorkspace(workspaceId, { isActive: true });
     this.logger.info({ companyId, workspaceId }, 'Workspace activated');
     return updated;
   }
 
   async deleteWorkspace(companyId: string, workspaceId: string, performedById: string) {
-    const workspace = await this.prisma.workspace.findFirst({
-      where: { id: workspaceId, companyId, deletedAt: null },
-    });
+    const workspace = await this.repo.findWorkspaceById(workspaceId, companyId);
 
     if (!workspace) {
       throw new NotFoundException('Workspace não encontrado');
     }
 
-    await this.prisma.workspace.update({
-      where: { id: workspaceId },
-      data: { deletedAt: new Date() },
-    });
-
+    await this.repo.softDeleteWorkspace(workspaceId);
     this.logger.info({ companyId, workspaceId, performedById }, 'Workspace soft-deleted');
   }
 
@@ -282,42 +170,25 @@ export class EmpresaService {
   async listMembers(companyId: string, query: ListMembersQueryDto) {
     const { search, isActive, page = 1, limit = 20 } = query;
 
-    // Passo 1: buscar workspaces desta empresa (não deletados)
-    const workspaces = await this.prisma.workspace.findMany({
-      where: { companyId, deletedAt: null },
-      select: { id: true, name: true },
-    });
+    const workspaces = await this.repo.findCompanyWorkspaces(companyId);
     const workspaceIds = workspaces.map((w) => w.id);
     const workspaceNameMap = new Map(workspaces.map((w) => [w.id, w.name]));
 
-    // Passo 2: buscar todos os memberships relativos a esta empresa
-    // (membership direto na empresa OU em qualquer workspace dela)
-    const memberships = await this.prisma.membership.findMany({
-      where: {
-        deletedAt: null,
-        OR: [
-          { resourceType: 'company', resourceId: companyId },
-          ...(workspaceIds.length > 0
-            ? [{ resourceType: ResourceType.workspace, resourceId: { in: workspaceIds } }]
-            : []),
-        ],
-      },
-      select: {
-        id: true,
-        role: true,
-        userId: true,
-        resourceType: true,
-        resourceId: true,
-        createdAt: true,
-      },
+    const memberships = await this.repo.findMembershipsSelect({
+      deletedAt: null,
+      OR: [
+        { resourceType: 'company', resourceId: companyId },
+        ...(workspaceIds.length > 0
+          ? [{ resourceType: ResourceType.workspace, resourceId: { in: workspaceIds } }]
+          : []),
+      ],
     });
 
     if (memberships.length === 0) {
       return { data: [], total: 0, page, limit };
     }
 
-    // Passo 3: consolidar por userId — manter o role mais alto e a data mais antiga
-    // e acumular papéis de workspace
+    // Consolidar por userId — manter o role mais alto e a data mais antiga
     const roleRank: Record<string, number> = { admin: 3, workspace_admin: 2, member: 1 };
     const consolidatedMap = new Map<string, { id: string; role: string; createdAt: Date }>();
     const workspaceRolesMap = new Map<
@@ -326,7 +197,6 @@ export class EmpresaService {
     >();
 
     for (const m of memberships) {
-      // Acumular papel de workspace por usuário
       if (m.resourceType === ResourceType.workspace) {
         const existing = workspaceRolesMap.get(m.userId) ?? [];
         existing.push({
@@ -351,7 +221,6 @@ export class EmpresaService {
             createdAt: existingConsolidated.createdAt,
           });
         } else if (m.createdAt < existingConsolidated.createdAt) {
-          // Mesma hierarquia — guardar data mais antiga
           consolidatedMap.set(m.userId, { ...existingConsolidated, createdAt: m.createdAt });
         }
       }
@@ -359,7 +228,6 @@ export class EmpresaService {
 
     const userIds = Array.from(consolidatedMap.keys());
 
-    // Passo 4: buscar usuários com filtros
     const userWhere: {
       id: { in: string[] };
       deletedAt: null;
@@ -381,24 +249,7 @@ export class EmpresaService {
       ];
     }
 
-    const [users, total] = await Promise.all([
-      this.prisma.user.findMany({
-        where: userWhere,
-        orderBy: { name: 'asc' },
-        skip: (page - 1) * limit,
-        take: limit,
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          phone: true,
-          isActive: true,
-          mustResetPassword: true,
-          createdAt: true,
-        },
-      }),
-      this.prisma.user.count({ where: userWhere }),
-    ]);
+    const [users, total] = await this.repo.findUsers(userWhere, page, limit);
 
     const data = users.map((u) => {
       const m = consolidatedMap.get(u.id);
@@ -416,15 +267,12 @@ export class EmpresaService {
 
   /** Lança ForbiddenException se targetUserId for admin ativo desta empresa */
   private async assertNotCompanyAdmin(companyId: string, targetUserId: string) {
-    const isAdmin = await this.prisma.membership.findFirst({
-      where: {
-        userId: targetUserId,
-        resourceType: ResourceType.company,
-        resourceId: companyId,
-        role: 'admin',
-        deletedAt: null,
-      },
-      select: { id: true },
+    const isAdmin = await this.repo.findMembership({
+      userId: targetUserId,
+      resourceType: ResourceType.company,
+      resourceId: companyId,
+      role: 'admin',
+      deletedAt: null,
     });
     if (isAdmin) {
       throw new ForbiddenException(
@@ -445,44 +293,25 @@ export class EmpresaService {
 
     await this.assertNotCompanyAdmin(companyId, targetUserId);
 
-    // Verificar que o usuário tem algum membership nesta empresa (direto ou via workspace)
-    const workspaces = await this.prisma.workspace.findMany({
-      where: { companyId, deletedAt: null },
-      select: { id: true },
-    });
-    const workspaceIds = workspaces.map((w) => w.id);
+    const workspaceRows = await this.repo.findCompanyWorkspaceIds(companyId);
+    const workspaceIds = workspaceRows.map((w) => w.id);
 
-    const membership = await this.prisma.membership.findFirst({
-      where: {
-        userId: targetUserId,
-        deletedAt: null,
-        OR: [
-          { resourceType: 'company', resourceId: companyId },
-          ...(workspaceIds.length > 0
-            ? [{ resourceType: ResourceType.workspace, resourceId: { in: workspaceIds } }]
-            : []),
-        ],
-      },
+    const membership = await this.repo.findMembership({
+      userId: targetUserId,
+      deletedAt: null,
+      OR: [
+        { resourceType: 'company', resourceId: companyId },
+        ...(workspaceIds.length > 0
+          ? [{ resourceType: ResourceType.workspace, resourceId: { in: workspaceIds } }]
+          : []),
+      ],
     });
 
     if (!membership) {
       throw new NotFoundException('Membro não encontrado nesta empresa');
     }
 
-    const updated = await this.prisma.user.update({
-      where: { id: targetUserId },
-      data: dto,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        isActive: true,
-        mustResetPassword: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
+    const updated = await this.repo.updateUser(targetUserId, dto);
 
     this.logger.info(
       { companyId, targetUserId, changes: Object.keys(dto), performedById },
@@ -498,16 +327,11 @@ export class EmpresaService {
 
     await this.assertNotCompanyAdmin(companyId, targetUserId);
 
-    // Buscar todos os workspaces desta empresa
-    const workspaces = await this.prisma.workspace.findMany({
-      where: { companyId, deletedAt: null },
-      select: { id: true },
-    });
-    const workspaceIds = workspaces.map((w) => w.id);
+    const workspaceRows = await this.repo.findCompanyWorkspaceIds(companyId);
+    const workspaceIds = workspaceRows.map((w) => w.id);
 
-    // Soft delete de todos os memberships do usuário nesta empresa (company + workspaces)
-    const result = await this.prisma.membership.updateMany({
-      where: {
+    const result = await this.repo.updateManyMemberships(
+      {
         userId: targetUserId,
         deletedAt: null,
         OR: [
@@ -517,8 +341,8 @@ export class EmpresaService {
             : []),
         ],
       },
-      data: { deletedAt: new Date() },
-    });
+      { deletedAt: new Date() },
+    );
 
     if (result.count === 0) {
       throw new NotFoundException('Membro não encontrado nesta empresa');
@@ -535,50 +359,34 @@ export class EmpresaService {
   async promoteToAdmin(companyId: string, dto: PromoteMemberDto, performedById: string) {
     const { userId } = dto;
 
-    // Verificar que o usuário é membro desta empresa
-    const companyMembership = await this.prisma.membership.findFirst({
-      where: {
-        userId,
-        resourceType: 'company',
-        resourceId: companyId,
-        deletedAt: null,
-      },
+    const companyMembership = await this.repo.findMembership({
+      userId,
+      resourceType: 'company',
+      resourceId: companyId,
+      deletedAt: null,
     });
 
     if (!companyMembership) {
       throw new NotFoundException('Usuário não é membro desta empresa');
     }
 
-    // Verificar se já é admin ativo
-    const existingAdmin = await this.prisma.membership.findFirst({
-      where: {
-        userId,
-        resourceType: 'company',
-        resourceId: companyId,
-        role: 'admin',
-        deletedAt: null,
-      },
+    const existingAdmin = await this.repo.findMembership({
+      userId,
+      resourceType: 'company',
+      resourceId: companyId,
+      role: 'admin',
+      deletedAt: null,
     });
 
     if (existingAdmin) {
       throw new ConflictException('Usuário já é administrador desta empresa');
     }
 
-    const membership = await this.prisma.membership.create({
-      data: {
-        userId,
-        resourceType: 'company',
-        resourceId: companyId,
-        role: 'admin',
-      },
-      select: {
-        id: true,
-        userId: true,
-        role: true,
-        resourceType: true,
-        resourceId: true,
-        createdAt: true,
-      },
+    const membership = await this.repo.createMembershipSelect({
+      userId,
+      resourceType: ResourceType.company,
+      resourceId: companyId,
+      role: MembershipRole.admin,
     });
 
     this.logger.info(
@@ -593,29 +401,24 @@ export class EmpresaService {
       throw new BadRequestException('Não é possível revogar o próprio papel de administrador');
     }
 
-    const adminMembership = await this.prisma.membership.findFirst({
-      where: {
-        userId: targetUserId,
-        resourceType: 'company',
-        resourceId: companyId,
-        role: 'admin',
-        deletedAt: null,
-      },
+    const adminMembership = await this.repo.findMembership({
+      userId: targetUserId,
+      resourceType: 'company',
+      resourceId: companyId,
+      role: 'admin',
+      deletedAt: null,
     });
 
     if (!adminMembership) {
       throw new NotFoundException('Papel de administrador não encontrado para este usuário');
     }
 
-    // Verificar se é o único admin ativo
-    const activeAdminsCount = await this.prisma.membership.count({
-      where: {
-        resourceType: 'company',
-        resourceId: companyId,
-        role: 'admin',
-        deletedAt: null,
-        id: { not: adminMembership.id },
-      },
+    const activeAdminsCount = await this.repo.countMemberships({
+      resourceType: 'company',
+      resourceId: companyId,
+      role: 'admin',
+      deletedAt: null,
+      id: { not: adminMembership.id },
     });
 
     if (activeAdminsCount === 0) {
@@ -624,11 +427,7 @@ export class EmpresaService {
       );
     }
 
-    await this.prisma.membership.update({
-      where: { id: adminMembership.id },
-      data: { deletedAt: new Date() },
-    });
-
+    await this.repo.updateMembership(adminMembership.id, { deletedAt: new Date() });
     this.logger.info({ companyId, targetUserId, performedById }, 'Company admin role revoked');
   }
 
@@ -638,35 +437,17 @@ export class EmpresaService {
    * - papel em cada workspace (workspace_admin | member | null se não é membro)
    */
   async getMemberRoles(companyId: string, targetUserId: string) {
-    // Verificar que o usuário existe
-    const user = await this.prisma.user.findFirst({
-      where: { id: targetUserId, deletedAt: null },
-      select: { id: true, name: true, email: true },
-    });
+    const user = await this.repo.findUserById(targetUserId);
     if (!user) throw new NotFoundException('Usuário não encontrado');
 
-    // Buscar todos os workspaces da empresa
-    const workspaces = await this.prisma.workspace.findMany({
-      where: { companyId, deletedAt: null },
-      select: { id: true, name: true, isActive: true },
-      orderBy: { name: 'asc' },
-    });
+    const workspaces = await this.repo.findCompanyWorkspacesWithActive(companyId);
     const workspaceIds = workspaces.map((w) => w.id);
 
-    // Buscar todos os memberships do usuário nesta empresa
-    const memberships = await this.prisma.membership.findMany({
-      where: {
-        userId: targetUserId,
-        deletedAt: null,
-        OR: [
-          { resourceType: ResourceType.company, resourceId: companyId },
-          ...(workspaceIds.length > 0
-            ? [{ resourceType: ResourceType.workspace, resourceId: { in: workspaceIds } }]
-            : []),
-        ],
-      },
-      select: { id: true, resourceType: true, resourceId: true, role: true },
-    });
+    const memberships = await this.repo.findMembershipsByUserAndScope(
+      targetUserId,
+      companyId,
+      workspaceIds,
+    );
 
     const companyMembership = memberships.find((m) => m.resourceType === ResourceType.company);
     const workspaceMembershipsMap = new Map(
@@ -702,52 +483,37 @@ export class EmpresaService {
   ) {
     await this.assertNotCompanyAdmin(companyId, userId);
 
-    // Verificar workspace pertence à empresa
-    const workspace = await this.prisma.workspace.findFirst({
-      where: { id: workspaceId, companyId, deletedAt: null },
-    });
+    const workspace = await this.repo.findWorkspaceById(workspaceId, companyId);
     if (!workspace) throw new NotFoundException('Workspace não encontrado');
 
-    // Verificar que o usuário é membro desta empresa (qualquer forma)
-    const workspaceIds = (
-      await this.prisma.workspace.findMany({
-        where: { companyId, deletedAt: null },
-        select: { id: true },
-      })
-    ).map((w) => w.id);
+    const allWorkspaceRows = await this.repo.findCompanyWorkspaceIds(companyId);
+    const allWorkspaceIds = allWorkspaceRows.map((w) => w.id);
 
-    const anyMembership = await this.prisma.membership.findFirst({
-      where: {
-        userId,
-        deletedAt: null,
-        OR: [
-          { resourceType: ResourceType.company, resourceId: companyId },
-          ...(workspaceIds.length > 0
-            ? [{ resourceType: ResourceType.workspace, resourceId: { in: workspaceIds } }]
-            : []),
-        ],
-      },
+    const anyMembership = await this.repo.findMembership({
+      userId,
+      deletedAt: null,
+      OR: [
+        { resourceType: ResourceType.company, resourceId: companyId },
+        ...(allWorkspaceIds.length > 0
+          ? [{ resourceType: ResourceType.workspace, resourceId: { in: allWorkspaceIds } }]
+          : []),
+      ],
     });
     if (!anyMembership) throw new NotFoundException('Usuário não é membro desta empresa');
 
-    // Verificar se já tem qualquer membership ativo neste workspace
-    const existing = await this.prisma.membership.findFirst({
-      where: {
-        userId,
-        resourceType: ResourceType.workspace,
-        resourceId: workspaceId,
-        deletedAt: null,
-      },
+    const existing = await this.repo.findMembership({
+      userId,
+      resourceType: ResourceType.workspace,
+      resourceId: workspaceId,
+      deletedAt: null,
     });
+
     if (existing) {
       if (existing.role === 'workspace_admin') {
         throw new ConflictException('Usuário já é administrador deste workspace');
       }
-      // Promover membership existente a workspace_admin
-      const updated = await this.prisma.membership.update({
-        where: { id: existing.id },
-        data: { role: 'workspace_admin' },
-        select: { id: true, userId: true, role: true, resourceId: true, createdAt: true },
+      const updated = await this.repo.updateMembershipSelect(existing.id, {
+        role: 'workspace_admin',
       });
       this.logger.info(
         { companyId, workspaceId, userId, performedById },
@@ -756,24 +522,26 @@ export class EmpresaService {
       return updated;
     }
 
-    // Garantir membership na empresa como member (se não existir)
-    const companyMembership = await this.prisma.membership.findFirst({
-      where: { userId, resourceType: ResourceType.company, resourceId: companyId, deletedAt: null },
+    const companyMembership = await this.repo.findMembership({
+      userId,
+      resourceType: ResourceType.company,
+      resourceId: companyId,
+      deletedAt: null,
     });
     if (!companyMembership) {
-      await this.prisma.membership.create({
-        data: { userId, resourceType: ResourceType.company, resourceId: companyId, role: 'member' },
+      await this.repo.createMembership({
+        userId,
+        resourceType: ResourceType.company,
+        resourceId: companyId,
+        role: MembershipRole.member,
       });
     }
 
-    const membership = await this.prisma.membership.create({
-      data: {
-        userId,
-        resourceType: ResourceType.workspace,
-        resourceId: workspaceId,
-        role: 'workspace_admin',
-      },
-      select: { id: true, userId: true, role: true, resourceId: true, createdAt: true },
+    const membership = await this.repo.createMembershipSelect({
+      userId,
+      resourceType: ResourceType.workspace,
+      resourceId: workspaceId,
+      role: MembershipRole.workspace_admin,
     });
 
     this.logger.info(
@@ -791,28 +559,20 @@ export class EmpresaService {
   ) {
     await this.assertNotCompanyAdmin(companyId, targetUserId);
 
-    // Verificar workspace pertence à empresa
-    const workspace = await this.prisma.workspace.findFirst({
-      where: { id: workspaceId, companyId, deletedAt: null },
-    });
+    const workspace = await this.repo.findWorkspaceById(workspaceId, companyId);
     if (!workspace) throw new NotFoundException('Workspace não encontrado');
 
-    const membership = await this.prisma.membership.findFirst({
-      where: {
-        userId: targetUserId,
-        resourceType: ResourceType.workspace,
-        resourceId: workspaceId,
-        role: 'workspace_admin',
-        deletedAt: null,
-      },
+    const membership = await this.repo.findMembership({
+      userId: targetUserId,
+      resourceType: ResourceType.workspace,
+      resourceId: workspaceId,
+      role: 'workspace_admin',
+      deletedAt: null,
     });
     if (!membership)
       throw new NotFoundException('Papel de workspace_admin não encontrado para este usuário');
 
-    await this.prisma.membership.update({
-      where: { id: membership.id },
-      data: { deletedAt: new Date() },
-    });
+    await this.repo.updateMembership(membership.id, { deletedAt: new Date() });
 
     this.logger.info(
       { companyId, workspaceId, targetUserId, performedById },

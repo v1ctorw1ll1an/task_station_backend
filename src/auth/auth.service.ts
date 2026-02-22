@@ -11,16 +11,16 @@ import * as crypto from 'crypto';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { TokenType } from '../generated/prisma/client';
 import { MailerService } from '../mailer/mailer.service';
-import { PrismaService } from '../prisma/prisma.service';
 import { ConsumeFirstAccessDto } from './dto/consume-first-access.dto';
 import { ConfirmResetPasswordDto } from './dto/confirm-reset-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
+import { AuthRepository } from './auth.repository';
 
 @Injectable()
 export class AuthService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly repo: AuthRepository,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly mailerService: MailerService,
@@ -29,9 +29,7 @@ export class AuthService {
   ) {}
 
   async validateUser(email: string, password: string) {
-    const user = await this.prisma.user.findFirst({
-      where: { email, deletedAt: null },
-    });
+    const user = await this.repo.findActiveUserByEmail(email);
 
     if (!user) {
       this.logger.warn({ email }, 'Login attempt for unknown email');
@@ -99,29 +97,20 @@ export class AuthService {
       updateData.name = dto.name.trim();
     }
 
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: updateData,
-    });
+    await this.repo.updateUser(userId, updateData);
 
     this.logger.info({ userId, nameProvided: !!dto.name }, 'Password changed via first access');
   }
 
   async forgotPassword(email: string): Promise<void> {
-    const user = await this.prisma.user.findFirst({
-      where: { email, deletedAt: null, isActive: true },
-    });
+    const user = await this.repo.findActiveUserByEmail(email);
 
-    if (!user) {
+    if (!user || !user.isActive) {
       this.logger.warn({ email }, 'Password reset requested for unknown or inactive email');
       return;
     }
 
-    // Invalida tokens de password_reset anteriores não utilizados
-    await this.prisma.passwordResetToken.updateMany({
-      where: { userId: user.id, usedAt: null, type: TokenType.password_reset },
-      data: { usedAt: new Date() },
-    });
+    await this.repo.invalidateTokensByType(user.id, TokenType.password_reset);
 
     const rawToken = crypto.randomBytes(32).toString('hex');
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
@@ -129,8 +118,11 @@ export class AuthService {
     const expiresInSeconds = this.configService.get<number>('PASSWORD_RESET_EXPIRES_IN', 3600);
     const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
 
-    await this.prisma.passwordResetToken.create({
-      data: { userId: user.id, tokenHash, expiresAt },
+    await this.repo.createPasswordResetToken({
+      userId: user.id,
+      tokenHash,
+      type: TokenType.password_reset,
+      expiresAt,
     });
 
     const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
@@ -147,10 +139,7 @@ export class AuthService {
     }
 
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-
-    const record = await this.prisma.passwordResetToken.findUnique({
-      where: { tokenHash },
-    });
+    const record = await this.repo.findPasswordResetToken(tokenHash);
 
     if (!record || record.usedAt !== null || record.expiresAt < new Date()) {
       this.logger.warn(
@@ -162,16 +151,7 @@ export class AuthService {
 
     const newHash = await bcrypt.hash(dto.newPassword, 10);
 
-    await this.prisma.$transaction([
-      this.prisma.user.update({
-        where: { id: record.userId },
-        data: { passwordHash: newHash, mustResetPassword: false },
-      }),
-      this.prisma.passwordResetToken.update({
-        where: { id: record.id },
-        data: { usedAt: new Date() },
-      }),
-    ]);
+    await this.repo.resetPasswordWithToken(record.userId, record.id, newHash);
 
     this.logger.info({ userId: record.userId }, 'Password reset confirmed');
   }
@@ -179,11 +159,7 @@ export class AuthService {
   /** Valida um token de primeiro acesso sem consumi-lo. Retorna email do usuário. */
   async validateFirstAccessToken(rawToken: string): Promise<{ email: string }> {
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-
-    const record = await this.prisma.passwordResetToken.findUnique({
-      where: { tokenHash },
-      include: { user: { select: { email: true } } },
-    });
+    const record = await this.repo.findPasswordResetTokenWithUser(tokenHash);
 
     if (
       !record ||
@@ -199,11 +175,7 @@ export class AuthService {
 
   /** Gera um token de primeiro acesso para o usuário. Invalida tokens anteriores do mesmo tipo. */
   async generateFirstAccessToken(userId: string): Promise<string> {
-    // Invalida tokens first_access anteriores não utilizados
-    await this.prisma.passwordResetToken.updateMany({
-      where: { userId, usedAt: null, type: TokenType.first_access },
-      data: { usedAt: new Date() },
-    });
+    await this.repo.invalidateTokensByType(userId, TokenType.first_access);
 
     const rawToken = crypto.randomBytes(32).toString('hex');
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
@@ -211,8 +183,11 @@ export class AuthService {
     const expiresInDays = this.configService.get<number>('FIRST_ACCESS_EXPIRES_DAYS', 7);
     const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
 
-    await this.prisma.passwordResetToken.create({
-      data: { userId, tokenHash, type: TokenType.first_access, expiresAt },
+    await this.repo.createPasswordResetToken({
+      userId,
+      tokenHash,
+      type: TokenType.first_access,
+      expiresAt,
     });
 
     this.logger.info({ userId, expiresAt }, 'First access token generated');
@@ -225,9 +200,7 @@ export class AuthService {
    * Retorna null se o usuário não tiver mustResetPassword=true.
    */
   async getOrRegenerateFirstAccessToken(userId: string): Promise<string | null> {
-    const user = await this.prisma.user.findFirst({
-      where: { id: userId, deletedAt: null },
-    });
+    const user = await this.repo.findActiveUserById(userId);
 
     if (!user) {
       throw new NotFoundException('Usuário não encontrado');
@@ -242,18 +215,13 @@ export class AuthService {
 
   /** Invalida as credenciais do usuário: seta mustResetPassword=true e gera novo token de primeiro acesso. */
   async invalidateUserCredentials(userId: string, performedById: string): Promise<string> {
-    const user = await this.prisma.user.findFirst({
-      where: { id: userId, deletedAt: null },
-    });
+    const user = await this.repo.findActiveUserById(userId);
 
     if (!user) {
       throw new NotFoundException('Usuário não encontrado');
     }
 
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { mustResetPassword: true },
-    });
+    await this.repo.updateUser(userId, { mustResetPassword: true });
 
     const rawToken = await this.generateFirstAccessToken(userId);
 
@@ -268,10 +236,7 @@ export class AuthService {
     }
 
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-
-    const record = await this.prisma.passwordResetToken.findUnique({
-      where: { tokenHash },
-    });
+    const record = await this.repo.findPasswordResetToken(tokenHash);
 
     if (
       !record ||
@@ -287,30 +252,12 @@ export class AuthService {
     }
 
     const passwordHash = await bcrypt.hash(dto.newPassword, 10);
-
-    const user = await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.user.update({
-        where: { id: record.userId },
-        data: {
-          passwordHash,
-          mustResetPassword: false,
-          name: dto.name.trim(),
-        },
-        select: {
-          id: true,
-          email: true,
-          isSuperuser: true,
-          mustResetPassword: true,
-        },
-      });
-
-      await tx.passwordResetToken.update({
-        where: { id: record.id },
-        data: { usedAt: new Date() },
-      });
-
-      return updated;
-    });
+    const user = await this.repo.consumeFirstAccessToken(
+      record.userId,
+      record.id,
+      passwordHash,
+      dto.name.trim(),
+    );
 
     this.logger.info({ userId: user.id }, 'First access token consumed — user set password');
 
