@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, IsString } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsEmail, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class CreateCompanyDto {
   @ApiProperty({ example: 'Acme Ltda' })
@@ -12,10 +12,13 @@ export class CreateCompanyDto {
   @IsNotEmpty()
   taxId: string;
 
-  @ApiProperty({ example: 'João Silva' })
+  @ApiPropertyOptional({
+    example: 'João Silva',
+    description: 'Ignorado se o email já pertence a um usuário existente',
+  })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  adminName: string;
+  adminName?: string;
 
   @ApiProperty({ example: 'admin@acme.com' })
   @IsEmail()

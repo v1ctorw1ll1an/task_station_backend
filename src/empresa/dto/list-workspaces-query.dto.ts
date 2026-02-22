@@ -5,7 +5,9 @@ import { IsBoolean, IsInt, IsOptional, Max, Min } from 'class-validator';
 export class ListWorkspacesQueryDto {
   @ApiPropertyOptional({ description: 'Filtrar por status ativo/inativo' })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value === 'true')
+  @Transform(({ value }: { value: string | undefined }) =>
+    value === undefined ? undefined : value === 'true',
+  )
   @IsBoolean()
   isActive?: boolean;
 

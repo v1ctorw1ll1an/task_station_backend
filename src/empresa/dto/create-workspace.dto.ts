@@ -12,11 +12,6 @@ export class CreateWorkspaceDto {
   @IsString()
   description?: string;
 
-  @ApiProperty({ example: 'Maria Costa' })
-  @IsString()
-  @IsNotEmpty()
-  adminName: string;
-
   @ApiProperty({ example: 'maria@acme.com' })
   @IsEmail()
   adminEmail: string;

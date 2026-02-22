@@ -302,7 +302,14 @@ export class EmpresaService {
             : []),
         ],
       },
-      select: { id: true, role: true, userId: true, resourceType: true, resourceId: true, createdAt: true },
+      select: {
+        id: true,
+        role: true,
+        userId: true,
+        resourceType: true,
+        resourceId: true,
+        createdAt: true,
+      },
     });
 
     if (memberships.length === 0) {
@@ -338,7 +345,11 @@ export class EmpresaService {
       } else {
         const existingRank = roleRank[existingConsolidated.role] ?? 0;
         if (rank > existingRank) {
-          consolidatedMap.set(m.userId, { id: m.id, role: m.role, createdAt: existingConsolidated.createdAt });
+          consolidatedMap.set(m.userId, {
+            id: m.id,
+            role: m.role,
+            createdAt: existingConsolidated.createdAt,
+          });
         } else if (m.createdAt < existingConsolidated.createdAt) {
           // Mesma hierarquia — guardar data mais antiga
           consolidatedMap.set(m.userId, { ...existingConsolidated, createdAt: m.createdAt });
@@ -721,7 +732,12 @@ export class EmpresaService {
 
     // Verificar se já tem qualquer membership ativo neste workspace
     const existing = await this.prisma.membership.findFirst({
-      where: { userId, resourceType: ResourceType.workspace, resourceId: workspaceId, deletedAt: null },
+      where: {
+        userId,
+        resourceType: ResourceType.workspace,
+        resourceId: workspaceId,
+        deletedAt: null,
+      },
     });
     if (existing) {
       if (existing.role === 'workspace_admin') {
@@ -733,7 +749,10 @@ export class EmpresaService {
         data: { role: 'workspace_admin' },
         select: { id: true, userId: true, role: true, resourceId: true, createdAt: true },
       });
-      this.logger.info({ companyId, workspaceId, userId, performedById }, 'User promoted to workspace_admin (existing membership upgraded)');
+      this.logger.info(
+        { companyId, workspaceId, userId, performedById },
+        'User promoted to workspace_admin (existing membership upgraded)',
+      );
       return updated;
     }
 
@@ -748,11 +767,19 @@ export class EmpresaService {
     }
 
     const membership = await this.prisma.membership.create({
-      data: { userId, resourceType: ResourceType.workspace, resourceId: workspaceId, role: 'workspace_admin' },
+      data: {
+        userId,
+        resourceType: ResourceType.workspace,
+        resourceId: workspaceId,
+        role: 'workspace_admin',
+      },
       select: { id: true, userId: true, role: true, resourceId: true, createdAt: true },
     });
 
-    this.logger.info({ companyId, workspaceId, userId, performedById }, 'User promoted to workspace_admin');
+    this.logger.info(
+      { companyId, workspaceId, userId, performedById },
+      'User promoted to workspace_admin',
+    );
     return membership;
   }
 
@@ -779,13 +806,17 @@ export class EmpresaService {
         deletedAt: null,
       },
     });
-    if (!membership) throw new NotFoundException('Papel de workspace_admin não encontrado para este usuário');
+    if (!membership)
+      throw new NotFoundException('Papel de workspace_admin não encontrado para este usuário');
 
     await this.prisma.membership.update({
       where: { id: membership.id },
       data: { deletedAt: new Date() },
     });
 
-    this.logger.info({ companyId, workspaceId, targetUserId, performedById }, 'Workspace admin role revoked');
+    this.logger.info(
+      { companyId, workspaceId, targetUserId, performedById },
+      'Workspace admin role revoked',
+    );
   }
 }
