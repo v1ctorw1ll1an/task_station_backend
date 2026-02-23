@@ -16,4 +16,11 @@ export class MeController {
   getMyCompanies(@CurrentUser() user: AuthUser) {
     return this.meService.getMyCompanies(user.id);
   }
+
+  @Get('workspaces')
+  @ApiOperation({ summary: 'Listar workspaces do usuário (qualquer role)' })
+  @ApiResponse({ status: 200, description: 'Lista de workspaces do usuário autenticado' })
+  getMyWorkspaces(@CurrentUser() user: AuthUser) {
+    return this.meService.getMyWorkspaces(user.id);
+  }
 }

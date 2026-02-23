@@ -6,6 +6,7 @@ import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { EmpresaModule } from './empresa/empresa.module';
+import { WorkspaceModule } from './workspace/workspace.module';
 import { HealthModule } from './health/health.module';
 import { MailerModule } from './mailer/mailer.module';
 import { MeModule } from './me/me.module';
@@ -68,6 +69,7 @@ import { SuperadminModule } from './superadmin/superadmin.module';
     AuthModule,
     SuperadminModule,
     EmpresaModule,
+    WorkspaceModule,
     MeModule,
   ],
   providers: [

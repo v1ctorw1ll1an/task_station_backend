@@ -15,14 +15,14 @@ export class MeRepository {
   findUserWorkspaceMemberships(userId: string) {
     return this.prisma.membership.findMany({
       where: { userId, resourceType: 'workspace', deletedAt: null },
-      select: { resourceId: true },
+      select: { resourceId: true, role: true },
     });
   }
 
   findWorkspacesByIds(ids: string[]) {
     return this.prisma.workspace.findMany({
       where: { id: { in: ids }, deletedAt: null },
-      select: { companyId: true },
+      select: { id: true, companyId: true },
     });
   }
 
@@ -31,6 +31,14 @@ export class MeRepository {
       where: { id: { in: ids }, deletedAt: null, isActive: true },
       select: { id: true, legalName: true },
       orderBy: { legalName: 'asc' },
+    });
+  }
+
+  findActiveWorkspacesByIds(ids: string[]) {
+    return this.prisma.workspace.findMany({
+      where: { id: { in: ids }, deletedAt: null, isActive: true },
+      select: { id: true, name: true, companyId: true },
+      orderBy: { name: 'asc' },
     });
   }
 }

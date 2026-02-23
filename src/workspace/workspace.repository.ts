@@ -1,0 +1,203 @@
+import { Injectable } from '@nestjs/common';
+import { MembershipRole, Prisma, ResourceType } from '../generated/prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+
+const PROJECT_SELECT = {
+  id: true,
+  name: true,
+  description: true,
+  isActive: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+const MEMBERSHIP_SELECT = {
+  id: true,
+  userId: true,
+  role: true,
+  resourceType: true,
+  resourceId: true,
+  createdAt: true,
+} as const;
+
+@Injectable()
+export class WorkspaceRepository {
+  constructor(private readonly prisma: PrismaService) {}
+
+  // ── Workspace ─────────────────────────────────────────────────────────────────
+
+  findWorkspaceById(workspaceId: string) {
+    return this.prisma.workspace.findFirst({
+      where: { id: workspaceId, deletedAt: null },
+      select: { id: true, companyId: true, isActive: true },
+    });
+  }
+
+  findWorkspaceCompanyId(workspaceId: string) {
+    return this.prisma.workspace.findFirst({
+      where: { id: workspaceId, deletedAt: null },
+      select: { companyId: true },
+    });
+  }
+
+  // ── Projects ──────────────────────────────────────────────────────────────────
+
+  findProjectById(projectId: string, workspaceId: string) {
+    return this.prisma.project.findFirst({
+      where: { id: projectId, workspaceId, deletedAt: null },
+    });
+  }
+
+  findProjectByIdSelect(projectId: string, workspaceId: string) {
+    return this.prisma.project.findFirst({
+      where: { id: projectId, workspaceId, deletedAt: null },
+      select: PROJECT_SELECT,
+    });
+  }
+
+  findProjects(
+    where: { workspaceId: string; deletedAt: null; isActive?: boolean },
+    page: number,
+    limit: number,
+  ) {
+    return Promise.all([
+      this.prisma.project.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        select: PROJECT_SELECT,
+      }),
+      this.prisma.project.count({ where }),
+    ]);
+  }
+
+  updateProject(id: string, data: Prisma.ProjectUpdateInput) {
+    return this.prisma.project.update({
+      where: { id },
+      data,
+      select: PROJECT_SELECT,
+    });
+  }
+
+  createProjectWithColumns(params: {
+    workspaceId: string;
+    name: string;
+    description?: string;
+    createdById: string;
+  }) {
+    return this.prisma.$transaction(async (tx) => {
+      const project = await tx.project.create({
+        data: {
+          workspaceId: params.workspaceId,
+          name: params.name,
+          description: params.description,
+          createdById: params.createdById,
+        },
+        select: PROJECT_SELECT,
+      });
+
+      const columns = await Promise.all([
+        tx.column.create({ data: { projectId: project.id, name: 'A Fazer', order: 1 } }),
+        tx.column.create({ data: { projectId: project.id, name: 'Em Progresso', order: 2 } }),
+        tx.column.create({ data: { projectId: project.id, name: 'Concluído', order: 3 } }),
+      ]);
+
+      return { project, columns };
+    });
+  }
+
+  softDeleteProjectCascade(projectId: string) {
+    const now = new Date();
+    return this.prisma.$transaction([
+      this.prisma.task.updateMany({
+        where: { projectId, deletedAt: null },
+        data: { deletedAt: now },
+      }),
+      this.prisma.column.updateMany({
+        where: { projectId, deletedAt: null },
+        data: { deletedAt: now },
+      }),
+      this.prisma.project.update({
+        where: { id: projectId },
+        data: { deletedAt: now },
+      }),
+    ]);
+  }
+
+  // ── Memberships ───────────────────────────────────────────────────────────────
+
+  findMembership(where: Prisma.MembershipWhereInput) {
+    return this.prisma.membership.findFirst({ where });
+  }
+
+  findMemberships(where: Prisma.MembershipWhereInput) {
+    return this.prisma.membership.findMany({
+      where,
+      select: { id: true, userId: true, role: true, createdAt: true },
+    });
+  }
+
+  countMemberships(where: Prisma.MembershipWhereInput) {
+    return this.prisma.membership.count({ where });
+  }
+
+  createMembership(data: {
+    userId: string;
+    resourceType: ResourceType;
+    resourceId: string;
+    role: MembershipRole;
+  }) {
+    return this.prisma.membership.create({ data });
+  }
+
+  createMembershipSelect(data: {
+    userId: string;
+    resourceType: ResourceType;
+    resourceId: string;
+    role: MembershipRole;
+  }) {
+    return this.prisma.membership.create({ data, select: MEMBERSHIP_SELECT });
+  }
+
+  updateMembership(id: string, data: Prisma.MembershipUpdateInput) {
+    return this.prisma.membership.update({ where: { id }, data });
+  }
+
+  updateMembershipSelect(id: string, data: Prisma.MembershipUpdateInput) {
+    return this.prisma.membership.update({
+      where: { id },
+      data,
+      select: MEMBERSHIP_SELECT,
+    });
+  }
+
+  // ── Users ─────────────────────────────────────────────────────────────────────
+
+  findUserById(id: string) {
+    return this.prisma.user.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, name: true, email: true, phone: true, isActive: true },
+    });
+  }
+
+  findUsers(where: Prisma.UserWhereInput, page: number, limit: number) {
+    return Promise.all([
+      this.prisma.user.findMany({
+        where,
+        orderBy: { name: 'asc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          isActive: true,
+          createdAt: true,
+        },
+      }),
+      this.prisma.user.count({ where }),
+    ]);
+  }
+}
