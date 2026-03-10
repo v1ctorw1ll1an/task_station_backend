@@ -11,6 +11,7 @@ import { HealthModule } from './health/health.module';
 import { MailerModule } from './mailer/mailer.module';
 import { MeModule } from './me/me.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { ProjetoModule } from './projeto/projeto.module';
 import { SuperadminModule } from './superadmin/superadmin.module';
 
 @Module({
@@ -71,6 +72,7 @@ import { SuperadminModule } from './superadmin/superadmin.module';
     EmpresaModule,
     WorkspaceModule,
     MeModule,
+    ProjetoModule,
   ],
   providers: [
     {
