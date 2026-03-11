@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Prisma generated client (regenerated during build)
+src/generated/
+
+# Tests
+coverage/
+test/
+
+# Logs
+*.log
+
+# Dev tools
+.vscode/
+.idea/
+.husky/
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Git
+.git/
+.gitignore
+
+# CI
+.github/
+
+# OS
+.DS_Store
+Thumbs.db

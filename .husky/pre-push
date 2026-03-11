@@ -1,0 +1,4 @@
+# Full check before push — typecheck + tests + build
+pnpm typecheck
+pnpm test --passWithNoTests --ci
+pnpm build
