@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -17,6 +18,8 @@ import { MoveTaskDto } from './dto/move-task.dto';
 import { AssignTaskDto } from './dto/assign-task.dto';
 import { CreateLabelDto } from './dto/create-label.dto';
 import { UpdateLabelDto } from './dto/update-label.dto';
+import { CreateCommentDto } from './dto/create-comment.dto';
+import { UpdateCommentDto } from './dto/update-comment.dto';
 
 @Injectable()
 export class ProjetoService {
@@ -352,5 +355,66 @@ export class ProjetoService {
 
     await this.repo.softDeleteLabel(labelId);
     this.logger.info({ projectId, labelId, performedById }, 'Label soft-deleted');
+  }
+
+  // ── Comentários ───────────────────────────────────────────────────────────────
+
+  async listComments(projectId: string, taskId: string) {
+    const task = await this.repo.findTaskById(taskId, projectId);
+    if (!task) throw new NotFoundException('Task não encontrada');
+    return this.repo.findCommentsByTask(taskId);
+  }
+
+  async createComment(projectId: string, taskId: string, dto: CreateCommentDto, userId: string) {
+    const task = await this.repo.findTaskById(taskId, projectId);
+    if (!task) throw new NotFoundException('Task não encontrada');
+
+    const comment = await this.repo.createComment(taskId, userId, dto.content);
+    this.logger.info({ projectId, taskId, commentId: comment.id, userId }, 'Comment created');
+    return comment;
+  }
+
+  async updateComment(
+    projectId: string,
+    taskId: string,
+    commentId: string,
+    dto: UpdateCommentDto,
+    userId: string,
+    isAdmin: boolean,
+  ) {
+    const task = await this.repo.findTaskById(taskId, projectId);
+    if (!task) throw new NotFoundException('Task não encontrada');
+
+    const comment = await this.repo.findCommentById(commentId, taskId);
+    if (!comment) throw new NotFoundException('Comentário não encontrado');
+
+    if (comment.userId !== userId && !isAdmin) {
+      throw new ForbiddenException('Você não tem permissão para editar este comentário');
+    }
+
+    const updated = await this.repo.updateComment(commentId, dto.content);
+    this.logger.info({ projectId, taskId, commentId, userId }, 'Comment updated');
+    return updated;
+  }
+
+  async deleteComment(
+    projectId: string,
+    taskId: string,
+    commentId: string,
+    userId: string,
+    isAdmin: boolean,
+  ) {
+    const task = await this.repo.findTaskById(taskId, projectId);
+    if (!task) throw new NotFoundException('Task não encontrada');
+
+    const comment = await this.repo.findCommentById(commentId, taskId);
+    if (!comment) throw new NotFoundException('Comentário não encontrado');
+
+    if (comment.userId !== userId && !isAdmin) {
+      throw new ForbiddenException('Você não tem permissão para excluir este comentário');
+    }
+
+    await this.repo.softDeleteComment(commentId);
+    this.logger.info({ projectId, taskId, commentId, userId }, 'Comment soft-deleted');
   }
 }

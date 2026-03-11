@@ -405,6 +405,63 @@ export class ProjetoRepository {
     });
   }
 
+  // ── Task Comments ─────────────────────────────────────────────────────────────
+
+  findCommentsByTask(taskId: string) {
+    return this.prisma.taskComment.findMany({
+      where: { taskId, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        content: true,
+        createdAt: true,
+        updatedAt: true,
+        user: { select: { id: true, name: true } },
+      },
+    });
+  }
+
+  findCommentById(commentId: string, taskId: string) {
+    return this.prisma.taskComment.findFirst({
+      where: { id: commentId, taskId, deletedAt: null },
+      select: { id: true, taskId: true, userId: true, content: true },
+    });
+  }
+
+  createComment(taskId: string, userId: string, content: string) {
+    return this.prisma.taskComment.create({
+      data: { taskId, userId, content },
+      select: {
+        id: true,
+        content: true,
+        createdAt: true,
+        updatedAt: true,
+        user: { select: { id: true, name: true } },
+      },
+    });
+  }
+
+  updateComment(commentId: string, content: string) {
+    return this.prisma.taskComment.update({
+      where: { id: commentId },
+      data: { content },
+      select: {
+        id: true,
+        content: true,
+        createdAt: true,
+        updatedAt: true,
+        user: { select: { id: true, name: true } },
+      },
+    });
+  }
+
+  softDeleteComment(commentId: string) {
+    return this.prisma.taskComment.update({
+      where: { id: commentId },
+      data: { deletedAt: new Date() },
+    });
+  }
+
   // ── Task History ──────────────────────────────────────────────────────────────
 
   createTaskHistories(

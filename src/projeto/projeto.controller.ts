@@ -27,6 +27,8 @@ import { MoveTaskDto } from './dto/move-task.dto';
 import { AssignTaskDto } from './dto/assign-task.dto';
 import { CreateLabelDto } from './dto/create-label.dto';
 import { UpdateLabelDto } from './dto/update-label.dto';
+import { CreateCommentDto } from './dto/create-comment.dto';
+import { UpdateCommentDto } from './dto/update-comment.dto';
 
 @ApiTags('projetos')
 @ApiBearerAuth()
@@ -237,5 +239,68 @@ export class ProjetoController {
     @CurrentUser() user: AuthUser,
   ) {
     await this.projetoService.deleteLabel(projectId, labelId, user.id);
+  }
+
+  // ── Comentários ───────────────────────────────────────────────────────────────
+
+  @Get('tasks/:taskId/comments')
+  @ApiOperation({ summary: 'Listar comentários da task' })
+  @ApiResponse({ status: 200, description: 'Comentários retornados' })
+  @ApiResponse({ status: 404, description: 'Task não encontrada' })
+  listComments(
+    @Param('projectId') projectId: string,
+    @Param('taskId') taskId: string,
+  ) {
+    return this.projetoService.listComments(projectId, taskId);
+  }
+
+  @Post('tasks/:taskId/comments')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Criar comentário na task' })
+  @ApiResponse({ status: 201, description: 'Comentário criado' })
+  @ApiResponse({ status: 404, description: 'Task não encontrada' })
+  createComment(
+    @Param('projectId') projectId: string,
+    @Param('taskId') taskId: string,
+    @Body() dto: CreateCommentDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.projetoService.createComment(projectId, taskId, dto, user.id);
+  }
+
+  @Patch('tasks/:taskId/comments/:commentId')
+  @ApiOperation({ summary: 'Editar comentário (apenas autor ou admin)' })
+  @ApiResponse({ status: 200, description: 'Comentário atualizado' })
+  @ApiResponse({ status: 403, description: 'Sem permissão para editar' })
+  @ApiResponse({ status: 404, description: 'Comentário não encontrado' })
+  updateComment(
+    @Param('projectId') projectId: string,
+    @Param('taskId') taskId: string,
+    @Param('commentId') commentId: string,
+    @Body() dto: UpdateCommentDto,
+    @CurrentUser() user: AuthUser,
+    @Request() req: { projectMemberRole?: string },
+  ) {
+    const isAdmin =
+      req.projectMemberRole === 'workspace_admin' || req.projectMemberRole === 'project_admin';
+    return this.projetoService.updateComment(projectId, taskId, commentId, dto, user.id, isAdmin);
+  }
+
+  @Delete('tasks/:taskId/comments/:commentId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Excluir comentário (apenas autor ou admin)' })
+  @ApiResponse({ status: 204, description: 'Comentário removido' })
+  @ApiResponse({ status: 403, description: 'Sem permissão para excluir' })
+  @ApiResponse({ status: 404, description: 'Comentário não encontrado' })
+  async deleteComment(
+    @Param('projectId') projectId: string,
+    @Param('taskId') taskId: string,
+    @Param('commentId') commentId: string,
+    @CurrentUser() user: AuthUser,
+    @Request() req: { projectMemberRole?: string },
+  ) {
+    const isAdmin =
+      req.projectMemberRole === 'workspace_admin' || req.projectMemberRole === 'project_admin';
+    await this.projetoService.deleteComment(projectId, taskId, commentId, user.id, isAdmin);
   }
 }

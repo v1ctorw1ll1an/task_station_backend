@@ -66,6 +66,7 @@ model User {
   projectRestrictions     ProjectRestriction[]
   passwordResetTokens     PasswordResetToken[]
   taskHistories           TaskHistory[]
+  taskComments            TaskComment[]
 
   @@index([deletedAt])
   @@map("users")
@@ -168,6 +169,7 @@ model Task {
   taskLabels    TaskLabel[]
   taskAssignees TaskAssignee[]
   taskHistory   TaskHistory[]
+  taskComments  TaskComment[]
 
   @@index([columnId, order])
   @@index([projectId, deletedAt])
@@ -277,4 +279,20 @@ model TaskHistory {
   @@index([taskId])
   @@index([changedAt])
   @@map("task_history")
+}
+
+model TaskComment {
+  id        String    @id @default(uuid())
+  taskId    String    @map("task_id")
+  userId    String    @map("user_id")
+  content   String
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt      @map("updated_at")
+  deletedAt DateTime?                 @map("deleted_at")
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([taskId, deletedAt])
+  @@map("task_comments")
 }
