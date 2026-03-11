@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsNotEmpty, IsOptional, IsString, IsUUID } from 'class-validator';
 
 export class CreateWorkspaceDto {
   @ApiProperty({ example: 'Desenvolvimento' })
@@ -12,7 +12,9 @@ export class CreateWorkspaceDto {
   @IsString()
   description?: string;
 
-  @ApiProperty({ example: 'maria@acme.com' })
-  @IsEmail()
-  adminEmail: string;
+  @ApiPropertyOptional({ example: ['uuid1', 'uuid2'] })
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  memberIds?: string[];
 }

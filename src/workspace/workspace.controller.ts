@@ -16,6 +16,7 @@ import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagg
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthUser } from '../auth/strategies/jwt.strategy';
 import { WorkspaceAdminGuard } from './guards/workspace-admin.guard';
+import { WorkspaceCompanyAdminGuard } from './guards/workspace-company-admin.guard';
 import { WorkspaceMemberGuard } from './guards/workspace-member.guard';
 import { WorkspaceService } from './workspace.service';
 import { AddWorkspaceMemberDto } from './dto/add-workspace-member.dto';
@@ -27,14 +28,25 @@ import { UpdateProjectDto } from './dto/update-project.dto';
 
 @ApiTags('workspace')
 @ApiBearerAuth()
-@UseGuards(WorkspaceAdminGuard)
 @Controller('workspace/:workspaceId')
 export class WorkspaceController {
   constructor(private readonly workspaceService: WorkspaceService) {}
 
+  // ── Workspace info ────────────────────────────────────────────────────────────
+
+  @Get()
+  @UseGuards(WorkspaceMemberGuard)
+  @ApiOperation({ summary: 'Informações básicas do workspace (id, companyId, isActive)' })
+  @ApiResponse({ status: 200, description: 'Workspace encontrado' })
+  @ApiResponse({ status: 404, description: 'Workspace não encontrado' })
+  getInfo(@Param('workspaceId') workspaceId: string) {
+    return this.workspaceService.getInfo(workspaceId);
+  }
+
   // ── Projetos ──────────────────────────────────────────────────────────────────
 
   @Post('projetos')
+  @UseGuards(WorkspaceAdminGuard)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Criar projeto com colunas Kanban padrão' })
   @ApiResponse({ status: 201, description: 'Projeto criado com sucesso' })
@@ -53,13 +65,14 @@ export class WorkspaceController {
   listProjects(
     @Param('workspaceId') workspaceId: string,
     @Query() query: ListProjectsQueryDto,
-    @Request() req: { workspaceMemberRole?: string },
+    @Request() req: { workspaceMemberRole?: string; user: AuthUser },
   ) {
     const isAdmin = req.workspaceMemberRole === 'workspace_admin';
-    return this.workspaceService.listProjects(workspaceId, query, isAdmin);
+    return this.workspaceService.listProjects(workspaceId, query, isAdmin, req.user.id);
   }
 
   @Get('projetos/:projectId')
+  @UseGuards(WorkspaceMemberGuard)
   @ApiOperation({ summary: 'Detalhes de um projeto' })
   @ApiResponse({ status: 200, description: 'Projeto encontrado' })
   @ApiResponse({ status: 404, description: 'Projeto não encontrado' })
@@ -68,6 +81,7 @@ export class WorkspaceController {
   }
 
   @Patch('projetos/:projectId')
+  @UseGuards(WorkspaceAdminGuard)
   @ApiOperation({ summary: 'Editar nome ou descrição do projeto' })
   @ApiResponse({ status: 200, description: 'Projeto atualizado' })
   @ApiResponse({ status: 404, description: 'Projeto não encontrado' })
@@ -80,6 +94,7 @@ export class WorkspaceController {
   }
 
   @Patch('projetos/:projectId/inativar')
+  @UseGuards(WorkspaceAdminGuard)
   @ApiOperation({ summary: 'Inativar projeto' })
   @ApiResponse({ status: 200, description: 'Projeto inativado' })
   @ApiResponse({ status: 404, description: 'Projeto não encontrado' })
@@ -91,6 +106,7 @@ export class WorkspaceController {
   }
 
   @Patch('projetos/:projectId/ativar')
+  @UseGuards(WorkspaceAdminGuard)
   @ApiOperation({ summary: 'Reativar projeto' })
   @ApiResponse({ status: 200, description: 'Projeto reativado' })
   @ApiResponse({ status: 404, description: 'Projeto não encontrado' })
@@ -102,6 +118,7 @@ export class WorkspaceController {
   }
 
   @Delete('projetos/:projectId')
+  @UseGuards(WorkspaceAdminGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Soft delete de projeto (colunas e tasks incluídas)' })
   @ApiResponse({ status: 204, description: 'Projeto removido' })
@@ -117,6 +134,7 @@ export class WorkspaceController {
   // ── Membros ───────────────────────────────────────────────────────────────────
 
   @Get('membros')
+  @UseGuards(WorkspaceAdminGuard)
   @ApiOperation({ summary: 'Listar membros do workspace com filtros e paginação' })
   @ApiResponse({ status: 200, description: 'Lista paginada de membros' })
   listMembers(
@@ -127,8 +145,9 @@ export class WorkspaceController {
   }
 
   @Post('membros')
+  @UseGuards(WorkspaceCompanyAdminGuard)
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Adicionar membro ao workspace' })
+  @ApiOperation({ summary: 'Adicionar membro ao workspace (somente gerente da empresa)' })
   @ApiResponse({ status: 201, description: 'Membro adicionado' })
   @ApiResponse({ status: 409, description: 'Usuário já é membro deste workspace' })
   addMember(
@@ -140,8 +159,9 @@ export class WorkspaceController {
   }
 
   @Delete('membros/:userId')
+  @UseGuards(WorkspaceCompanyAdminGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Remover membro do workspace' })
+  @ApiOperation({ summary: 'Remover membro do workspace (somente gerente da empresa)' })
   @ApiResponse({ status: 204, description: 'Membro removido' })
   @ApiResponse({ status: 400, description: 'Não é possível remover a si mesmo' })
   @ApiResponse({ status: 403, description: 'Revogue o papel de admin antes de remover' })
@@ -157,8 +177,9 @@ export class WorkspaceController {
   // ── Admins ────────────────────────────────────────────────────────────────────
 
   @Post('admins')
+  @UseGuards(WorkspaceCompanyAdminGuard)
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Promover membro a workspace_admin' })
+  @ApiOperation({ summary: 'Promover membro a workspace_admin (somente gerente da empresa)' })
   @ApiResponse({ status: 201, description: 'Membro promovido a admin' })
   @ApiResponse({ status: 404, description: 'Usuário não é membro deste workspace' })
   @ApiResponse({ status: 409, description: 'Usuário já é administrador' })
@@ -171,8 +192,9 @@ export class WorkspaceController {
   }
 
   @Delete('admins/:userId')
+  @UseGuards(WorkspaceCompanyAdminGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Revogar papel de workspace_admin' })
+  @ApiOperation({ summary: 'Revogar papel de workspace_admin (somente gerente da empresa)' })
   @ApiResponse({ status: 204, description: 'Papel de admin revogado' })
   @ApiResponse({ status: 400, description: 'Não pode revogar o único admin ou o próprio papel' })
   @ApiResponse({ status: 404, description: 'Admin não encontrado' })

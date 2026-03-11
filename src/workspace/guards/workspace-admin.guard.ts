@@ -19,7 +19,17 @@ export class WorkspaceAdminGuard implements CanActivate {
       throw new ForbiddenException('Workspace não identificado');
     }
 
-    const [membership, workspace] = await Promise.all([
+    const workspace = await this.prisma.workspace.findFirst({
+      where: { id: workspaceId, deletedAt: null, isActive: true },
+      select: { companyId: true },
+    });
+
+    if (!workspace) {
+      throw new ForbiddenException('Acesso restrito a administradores deste workspace');
+    }
+
+    // Verificar admin do workspace OU admin da empresa dona do workspace
+    const [workspaceAdminMembership, companyAdminMembership] = await Promise.all([
       this.prisma.membership.findFirst({
         where: {
           userId: user.id,
@@ -28,13 +38,21 @@ export class WorkspaceAdminGuard implements CanActivate {
           role: 'workspace_admin',
           deletedAt: null,
         },
+        select: { id: true },
       }),
-      this.prisma.workspace.findFirst({
-        where: { id: workspaceId, deletedAt: null, isActive: true },
+      this.prisma.membership.findFirst({
+        where: {
+          userId: user.id,
+          resourceType: 'company',
+          resourceId: workspace.companyId,
+          role: 'admin',
+          deletedAt: null,
+        },
+        select: { id: true },
       }),
     ]);
 
-    if (!membership || !workspace) {
+    if (!workspaceAdminMembership && !companyAdminMembership) {
       throw new ForbiddenException('Acesso restrito a administradores deste workspace');
     }
 

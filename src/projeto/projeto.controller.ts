@@ -25,6 +25,8 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { MoveTaskDto } from './dto/move-task.dto';
 import { AssignTaskDto } from './dto/assign-task.dto';
+import { CreateLabelDto } from './dto/create-label.dto';
+import { UpdateLabelDto } from './dto/update-label.dto';
 
 @ApiTags('projetos')
 @ApiBearerAuth()
@@ -161,6 +163,17 @@ export class ProjetoController {
     await this.projetoService.deleteTask(projectId, taskId, user.id);
   }
 
+  @Get('tasks/:taskId/history')
+  @ApiOperation({ summary: 'Histórico de alterações da task' })
+  @ApiResponse({ status: 200, description: 'Histórico retornado com sucesso' })
+  @ApiResponse({ status: 404, description: 'Task não encontrada' })
+  getTaskHistory(
+    @Param('projectId') projectId: string,
+    @Param('taskId') taskId: string,
+  ) {
+    return this.projetoService.getTaskHistory(projectId, taskId);
+  }
+
   @Patch('tasks/:taskId/assign')
   @ApiOperation({ summary: 'Atribuir ou remover responsável da task' })
   @ApiResponse({ status: 200, description: 'Responsável atualizado' })
@@ -173,5 +186,56 @@ export class ProjetoController {
     @Request() req: { projectMemberRole?: string },
   ) {
     return this.projetoService.assignTask(projectId, taskId, dto, user.id);
+  }
+
+  // ── Labels ────────────────────────────────────────────────────────────────────
+
+  @Get('labels')
+  @ApiOperation({ summary: 'Listar labels do projeto' })
+  @ApiResponse({ status: 200, description: 'Lista de labels' })
+  listLabels(@Param('projectId') projectId: string) {
+    return this.projetoService.listLabels(projectId);
+  }
+
+  @Post('labels')
+  @UseGuards(ProjetoAdminGuard)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Criar label no projeto' })
+  @ApiResponse({ status: 201, description: 'Label criada' })
+  @ApiResponse({ status: 409, description: 'Label com este nome já existe' })
+  createLabel(
+    @Param('projectId') projectId: string,
+    @Body() dto: CreateLabelDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.projetoService.createLabel(projectId, dto, user.id);
+  }
+
+  @Patch('labels/:labelId')
+  @UseGuards(ProjetoAdminGuard)
+  @ApiOperation({ summary: 'Editar label' })
+  @ApiResponse({ status: 200, description: 'Label atualizada' })
+  @ApiResponse({ status: 404, description: 'Label não encontrada' })
+  updateLabel(
+    @Param('projectId') projectId: string,
+    @Param('labelId') labelId: string,
+    @Body() dto: UpdateLabelDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.projetoService.updateLabel(projectId, labelId, dto, user.id);
+  }
+
+  @Delete('labels/:labelId')
+  @UseGuards(ProjetoAdminGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Soft delete de label' })
+  @ApiResponse({ status: 204, description: 'Label removida' })
+  @ApiResponse({ status: 404, description: 'Label não encontrada' })
+  async deleteLabel(
+    @Param('projectId') projectId: string,
+    @Param('labelId') labelId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    await this.projetoService.deleteLabel(projectId, labelId, user.id);
   }
 }

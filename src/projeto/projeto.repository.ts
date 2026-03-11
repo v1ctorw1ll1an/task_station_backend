@@ -12,8 +12,19 @@ const TASK_SELECT = {
   startDate: true,
   columnId: true,
   projectId: true,
-  assignee: { select: { id: true, name: true } },
+  taskAssignees: { select: { user: { select: { id: true, name: true } } } },
   reporter: { select: { id: true, name: true } },
+  taskLabels: {
+    where: { label: { deletedAt: null } },
+    select: { label: { select: { id: true, name: true, color: true } } },
+  },
+} as const;
+
+const LABEL_SELECT = {
+  id: true,
+  name: true,
+  color: true,
+  projectId: true,
 } as const;
 
 const COLUMN_SELECT = {
@@ -156,11 +167,12 @@ export class ProjetoRepository {
     title: string;
     description?: string;
     priority?: TaskPriority;
-    assigneeId?: string;
+    assigneeIds?: string[];
     reporterId: string;
     createdById: string;
     startDate?: string;
     dueDate?: string;
+    labelIds?: string[];
   }) {
     // Buscar maior ordem atual na coluna
     const lastTask = await this.prisma.task.findFirst({
@@ -180,13 +192,25 @@ export class ProjetoRepository {
         priority: data.priority ?? TaskPriority.medium,
         order,
         reporterId: data.reporterId,
-        assigneeId: data.assigneeId,
         createdById: data.createdById,
         startDate: data.startDate ? new Date(data.startDate) : undefined,
         dueDate: data.dueDate ? new Date(data.dueDate) : undefined,
+        ...(data.labelIds?.length
+          ? { taskLabels: { create: data.labelIds.map((labelId) => ({ labelId })) } }
+          : {}),
+        ...(data.assigneeIds?.length
+          ? { taskAssignees: { create: data.assigneeIds.map((userId) => ({ userId })) } }
+          : {}),
       },
       select: TASK_SELECT,
     });
+  }
+
+  async updateTaskAssignees(taskId: string, userIds: string[]) {
+    return this.prisma.$transaction([
+      this.prisma.taskAssignee.deleteMany({ where: { taskId } }),
+      ...userIds.map((userId) => this.prisma.taskAssignee.create({ data: { taskId, userId } })),
+    ]);
   }
 
   updateTask(taskId: string, data: Prisma.TaskUpdateInput) {
@@ -195,6 +219,15 @@ export class ProjetoRepository {
       data,
       select: TASK_SELECT,
     });
+  }
+
+  async updateTaskLabels(taskId: string, labelIds: string[]) {
+    return this.prisma.$transaction([
+      this.prisma.taskLabel.deleteMany({ where: { taskId } }),
+      ...labelIds.map((labelId) =>
+        this.prisma.taskLabel.create({ data: { taskId, labelId } }),
+      ),
+    ]);
   }
 
   softDeleteTask(taskId: string) {
@@ -295,27 +328,104 @@ export class ProjetoRepository {
   async findWorkspaceMembersByProject(projectId: string) {
     const project = await this.prisma.project.findFirst({
       where: { id: projectId, deletedAt: null },
-      select: { workspaceId: true },
+      select: {
+        workspaceId: true,
+        workspace: { select: { companyId: true } },
+      },
     });
 
     if (!project) return [];
 
-    const memberships = await this.prisma.membership.findMany({
-      where: {
-        resourceType: 'workspace',
-        resourceId: project.workspaceId,
-        deletedAt: null,
-      },
-      select: { userId: true },
-    });
+    const [workspaceMemberships, companyAdminMemberships] = await Promise.all([
+      this.prisma.membership.findMany({
+        where: { resourceType: 'workspace', resourceId: project.workspaceId, deletedAt: null },
+        select: { userId: true },
+      }),
+      this.prisma.membership.findMany({
+        where: {
+          resourceType: 'company',
+          resourceId: project.workspace.companyId,
+          role: 'admin',
+          deletedAt: null,
+        },
+        select: { userId: true },
+      }),
+    ]);
 
-    const userIds = memberships.map((m) => m.userId);
+    const userIds = [
+      ...new Set([
+        ...workspaceMemberships.map((m) => m.userId),
+        ...companyAdminMemberships.map((m) => m.userId),
+      ]),
+    ];
+
     if (userIds.length === 0) return [];
 
     return this.prisma.user.findMany({
       where: { id: { in: userIds }, deletedAt: null, isActive: true },
       select: { id: true, name: true, email: true },
       orderBy: { name: 'asc' },
+    });
+  }
+
+  // ── Labels ────────────────────────────────────────────────────────────────────
+
+  findLabelsByProject(projectId: string) {
+    return this.prisma.label.findMany({
+      where: { projectId, deletedAt: null },
+      select: LABEL_SELECT,
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  findLabelById(labelId: string, projectId: string) {
+    return this.prisma.label.findFirst({
+      where: { id: labelId, projectId, deletedAt: null },
+      select: LABEL_SELECT,
+    });
+  }
+
+  createLabel(data: { projectId: string; name: string; color: string }) {
+    return this.prisma.label.create({ data, select: LABEL_SELECT });
+  }
+
+  updateLabel(labelId: string, data: { name?: string; color?: string }) {
+    return this.prisma.label.update({
+      where: { id: labelId },
+      data,
+      select: LABEL_SELECT,
+    });
+  }
+
+  softDeleteLabel(labelId: string) {
+    return this.prisma.label.update({
+      where: { id: labelId },
+      data: { deletedAt: new Date() },
+      select: LABEL_SELECT,
+    });
+  }
+
+  // ── Task History ──────────────────────────────────────────────────────────────
+
+  createTaskHistories(
+    entries: { taskId: string; userId: string; field: string; oldValue: string | null; newValue: string | null }[],
+  ) {
+    if (entries.length === 0) return Promise.resolve({ count: 0 });
+    return this.prisma.taskHistory.createMany({ data: entries });
+  }
+
+  getTaskHistory(taskId: string) {
+    return this.prisma.taskHistory.findMany({
+      where: { taskId },
+      orderBy: { changedAt: 'desc' },
+      select: {
+        id: true,
+        field: true,
+        oldValue: true,
+        newValue: true,
+        changedAt: true,
+        user: { select: { id: true, name: true } },
+      },
     });
   }
 }

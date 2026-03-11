@@ -57,6 +57,46 @@ export class EmpresaRepository {
     });
   }
 
+  async createUserWithCompanyMembership(data: {
+    name: string;
+    email: string;
+    phone?: string;
+    passwordHash: string;
+    companyId: string;
+  }) {
+    return this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          name: data.name,
+          email: data.email,
+          phone: data.phone,
+          passwordHash: data.passwordHash,
+          mustResetPassword: true,
+          isSuperuser: false,
+          isActive: true,
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          isActive: true,
+          mustResetPassword: true,
+          createdAt: true,
+        },
+      });
+      await tx.membership.create({
+        data: {
+          userId: user.id,
+          resourceType: 'company',
+          resourceId: data.companyId,
+          role: 'member',
+        },
+      });
+      return user;
+    });
+  }
+
   // ── Workspaces ────────────────────────────────────────────────────────────────
 
   findWorkspaceById(workspaceId: string, companyId: string) {
@@ -232,7 +272,77 @@ export class EmpresaRepository {
     return this.prisma.membership.updateMany({ where, data });
   }
 
+  // ── Projects ──────────────────────────────────────────────────────────────────
+
+  findProjectsByWorkspace(workspaceId: string) {
+    return this.prisma.project.findMany({
+      where: { workspaceId, deletedAt: null },
+      select: { id: true, name: true, isActive: true },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  // ── Project restrictions ───────────────────────────────────────────────────────
+
+  findProjectRestriction(userId: string, projectId: string) {
+    return this.prisma.projectRestriction.findUnique({
+      where: { userId_projectId: { userId, projectId } },
+    });
+  }
+
+  findProjectRestrictionsByUser(userId: string, projectIds: string[]) {
+    return this.prisma.projectRestriction.findMany({
+      where: { userId, projectId: { in: projectIds } },
+      select: { projectId: true },
+    });
+  }
+
+  createProjectRestriction(userId: string, projectId: string) {
+    return this.prisma.projectRestriction.create({
+      data: { userId, projectId },
+    });
+  }
+
+  deleteProjectRestriction(userId: string, projectId: string) {
+    return this.prisma.projectRestriction.deleteMany({
+      where: { userId, projectId },
+    });
+  }
+
   // ── Transactions ──────────────────────────────────────────────────────────────
+
+  createWorkspaceWithMembers(params: {
+    workspaceName: string;
+    workspaceDescription?: string;
+    companyId: string;
+    createdById: string;
+    memberIds: string[];
+  }) {
+    return this.prisma.$transaction(async (tx) => {
+      const workspace = await tx.workspace.create({
+        data: {
+          name: params.workspaceName,
+          description: params.workspaceDescription,
+          companyId: params.companyId,
+          createdById: params.createdById,
+        },
+      });
+
+      if (params.memberIds.length > 0) {
+        await tx.membership.createMany({
+          data: params.memberIds.map((userId) => ({
+            userId,
+            resourceType: ResourceType.workspace,
+            resourceId: workspace.id,
+            role: MembershipRole.member,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      return workspace;
+    });
+  }
 
   createWorkspaceWithNewAdmin(params: {
     workspaceName: string;

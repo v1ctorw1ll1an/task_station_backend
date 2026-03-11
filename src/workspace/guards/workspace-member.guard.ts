@@ -20,7 +20,17 @@ export class WorkspaceMemberGuard implements CanActivate {
       throw new ForbiddenException('Workspace não identificado');
     }
 
-    const [membership, workspace] = await Promise.all([
+    const workspace = await this.prisma.workspace.findFirst({
+      where: { id: workspaceId, deletedAt: null, isActive: true },
+      select: { companyId: true },
+    });
+
+    if (!workspace) {
+      throw new ForbiddenException('Acesso restrito a membros deste workspace');
+    }
+
+    // Verificar membership no workspace OU admin da empresa dona do workspace
+    const [workspaceMembership, companyAdminMembership] = await Promise.all([
       this.prisma.membership.findFirst({
         where: {
           userId: user.id,
@@ -30,17 +40,24 @@ export class WorkspaceMemberGuard implements CanActivate {
         },
         select: { role: true },
       }),
-      this.prisma.workspace.findFirst({
-        where: { id: workspaceId, deletedAt: null, isActive: true },
+      this.prisma.membership.findFirst({
+        where: {
+          userId: user.id,
+          resourceType: 'company',
+          resourceId: workspace.companyId,
+          role: 'admin',
+          deletedAt: null,
+        },
+        select: { id: true },
       }),
     ]);
 
-    if (!membership || !workspace) {
+    if (!workspaceMembership && !companyAdminMembership) {
       throw new ForbiddenException('Acesso restrito a membros deste workspace');
     }
 
-    // Injeta a role do membro na request para uso downstream
-    request.workspaceMemberRole = membership.role;
+    // Injetar a role na request — company admin recebe workspace_admin para acesso total
+    request.workspaceMemberRole = workspaceMembership?.role ?? 'workspace_admin';
 
     return true;
   }

@@ -55,8 +55,15 @@ export class WorkspaceRepository {
     });
   }
 
+  findRestrictedProjectIds(workspaceId: string, userId: string) {
+    return this.prisma.projectRestriction.findMany({
+      where: { userId, project: { workspaceId, deletedAt: null } },
+      select: { projectId: true },
+    });
+  }
+
   findProjects(
-    where: { workspaceId: string; deletedAt: null; isActive?: boolean },
+    where: { workspaceId: string; deletedAt: null; isActive?: boolean; id?: { notIn: string[] } },
     page: number,
     limit: number,
   ) {

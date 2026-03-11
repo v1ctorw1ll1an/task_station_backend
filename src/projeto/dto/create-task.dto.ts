@@ -1,4 +1,5 @@
 import {
+  IsArray,
   IsDateString,
   IsEnum,
   IsOptional,
@@ -27,8 +28,9 @@ export class CreateTaskDto {
   priority?: TaskPriority;
 
   @IsOptional()
-  @IsUUID('4', { message: 'ID do responsável inválido' })
-  assigneeId?: string;
+  @IsArray()
+  @IsUUID('4', { each: true, message: 'ID do responsável inválido' })
+  assigneeIds?: string[];
 
   @IsOptional()
   @IsDateString()
@@ -37,4 +39,9 @@ export class CreateTaskDto {
   @IsOptional()
   @IsDateString()
   dueDate?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  labelIds?: string[];
 }

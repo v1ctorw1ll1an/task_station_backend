@@ -1,4 +1,5 @@
 import {
+  IsArray,
   IsDateString,
   IsEnum,
   IsOptional,
@@ -25,8 +26,9 @@ export class UpdateTaskDto {
   priority?: TaskPriority;
 
   @IsOptional()
-  @IsUUID('4', { message: 'ID do responsável inválido' })
-  assigneeId?: string | null;
+  @IsArray()
+  @IsUUID('4', { each: true, message: 'ID do responsável inválido' })
+  assigneeIds?: string[];
 
   @IsOptional()
   @IsDateString()
@@ -35,4 +37,9 @@ export class UpdateTaskDto {
   @IsOptional()
   @IsDateString()
   dueDate?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  labelIds?: string[];
 }

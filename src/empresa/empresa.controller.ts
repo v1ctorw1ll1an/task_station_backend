@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -16,6 +17,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthUser } from '../auth/strategies/jwt.strategy';
 import { CompanyAdminGuard } from './guards/company-admin.guard';
 import { EmpresaService } from './empresa.service';
+import { ContratarMembroDto } from './dto/contratar-membro.dto';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { ListMembersQueryDto } from './dto/list-members-query.dto';
 import { ListWorkspacesQueryDto } from './dto/list-workspaces-query.dto';
@@ -108,6 +110,19 @@ export class EmpresaController {
 
   // ── Membros ───────────────────────────────────────────────────────────────────
 
+  @Post('membros/contratar')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Contratar novo colaborador (cria conta + adiciona à empresa)' })
+  @ApiResponse({ status: 201, description: 'Colaborador criado e adicionado à empresa' })
+  @ApiResponse({ status: 409, description: 'Email já cadastrado no sistema' })
+  contratarMembro(
+    @Param('companyId') companyId: string,
+    @Body() dto: ContratarMembroDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.empresaService.contratarMembro(companyId, dto, user.id);
+  }
+
   @Get('membros')
   @ApiOperation({ summary: 'Listar membros da empresa com filtros e paginação' })
   @ApiResponse({ status: 200, description: 'Lista paginada de membros' })
@@ -181,6 +196,140 @@ export class EmpresaController {
   @ApiResponse({ status: 404, description: 'Usuário não encontrado' })
   getMemberRoles(@Param('companyId') companyId: string, @Param('userId') userId: string) {
     return this.empresaService.getMemberRoles(companyId, userId);
+  }
+
+  @Patch('workspaces/:workspaceId/membros/:userId/role')
+  @ApiOperation({ summary: 'Definir papel do membro no workspace (dropdown: workspace_admin | project_admin | member | null=sem acesso)' })
+  @ApiResponse({ status: 200, description: 'Papel atualizado' })
+  setWorkspaceMemberRole(
+    @Param('companyId') companyId: string,
+    @Param('workspaceId') workspaceId: string,
+    @Param('userId') userId: string,
+    @Body() dto: { role: 'workspace_admin' | 'project_admin' | 'member' | null },
+    @CurrentUser() user: AuthUser,
+  ) {
+    const allowed = ['workspace_admin', 'project_admin', 'member', null];
+    if (!allowed.includes(dto.role)) {
+      throw new BadRequestException('Role inválido');
+    }
+    return this.empresaService.setWorkspaceMemberRole(
+      companyId,
+      workspaceId,
+      userId,
+      dto.role,
+      user.id,
+    );
+  }
+
+  @Post('workspaces/:workspaceId/projetos/:projectId/restrict')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Restringir acesso de um usuário a um projeto específico' })
+  @ApiResponse({ status: 201, description: 'Restrição criada' })
+  restrictProject(
+    @Param('companyId') companyId: string,
+    @Param('workspaceId') workspaceId: string,
+    @Param('projectId') projectId: string,
+    @Body() dto: PromoteMemberDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.empresaService.restrictProject(
+      companyId,
+      workspaceId,
+      projectId,
+      dto.userId,
+      user.id,
+    );
+  }
+
+  @Delete('workspaces/:workspaceId/projetos/:projectId/restrict/:userId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Remover restrição de acesso de um usuário a um projeto' })
+  @ApiResponse({ status: 204, description: 'Restrição removida' })
+  async unrestrictProject(
+    @Param('companyId') companyId: string,
+    @Param('workspaceId') workspaceId: string,
+    @Param('projectId') projectId: string,
+    @Param('userId') userId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    await this.empresaService.unrestrictProject(
+      companyId,
+      workspaceId,
+      projectId,
+      userId,
+      user.id,
+    );
+  }
+
+  @Post('workspaces/:workspaceId/projetos/:projectId/admins')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Promover usuário a gerente de projeto' })
+  @ApiResponse({ status: 201, description: 'Gerente de projeto definido' })
+  setProjectAdmin(
+    @Param('companyId') companyId: string,
+    @Param('workspaceId') workspaceId: string,
+    @Param('projectId') projectId: string,
+    @Body() dto: PromoteMemberDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.empresaService.setProjectAdmin(
+      companyId,
+      workspaceId,
+      projectId,
+      dto.userId,
+      user.id,
+    );
+  }
+
+  @Delete('workspaces/:workspaceId/projetos/:projectId/admins/:userId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Revogar papel de gerente de projeto' })
+  @ApiResponse({ status: 204, description: 'Papel revogado' })
+  async revokeProjectAdmin(
+    @Param('companyId') companyId: string,
+    @Param('workspaceId') workspaceId: string,
+    @Param('projectId') projectId: string,
+    @Param('userId') userId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    await this.empresaService.revokeProjectAdmin(
+      companyId,
+      workspaceId,
+      projectId,
+      userId,
+      user.id,
+    );
+  }
+
+  @Post('workspaces/:workspaceId/membros')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Adicionar membro a um workspace da empresa' })
+  @ApiResponse({ status: 201, description: 'Membro adicionado ao workspace' })
+  @ApiResponse({ status: 404, description: 'Workspace não encontrado' })
+  @ApiResponse({ status: 409, description: 'Usuário já é membro deste workspace' })
+  addWorkspaceMember(
+    @Param('companyId') companyId: string,
+    @Param('workspaceId') workspaceId: string,
+    @Body() dto: PromoteMemberDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.empresaService.addWorkspaceMember(companyId, workspaceId, dto.userId, user.id);
+  }
+
+  @Delete('workspaces/:workspaceId/membros/:userId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Remover membro de um workspace da empresa' })
+  @ApiResponse({ status: 204, description: 'Membro removido do workspace' })
+  @ApiResponse({ status: 400, description: 'Não é possível remover a si mesmo' })
+  @ApiResponse({ status: 403, description: 'Revogue o papel de workspace_admin antes de remover' })
+  @ApiResponse({ status: 404, description: 'Workspace ou membro não encontrado' })
+  async removeWorkspaceMember(
+    @Param('companyId') companyId: string,
+    @Param('workspaceId') workspaceId: string,
+    @Param('userId') userId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    await this.empresaService.removeWorkspaceMember(companyId, workspaceId, userId, user.id);
   }
 
   @Post('workspaces/:workspaceId/admins')

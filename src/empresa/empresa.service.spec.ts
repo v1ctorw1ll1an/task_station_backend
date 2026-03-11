@@ -83,6 +83,7 @@ function makeRepo(
     updateMembership: jest.fn(),
     updateMembershipSelect: jest.fn(),
     updateManyMemberships: jest.fn(),
+    createWorkspaceWithMembers: jest.fn(),
     createWorkspaceWithNewAdmin: jest.fn(),
     createWorkspaceWithExistingAdmin: jest.fn(),
     ...overrides,
@@ -130,70 +131,37 @@ function makeService(repo: jest.Mocked<EmpresaRepository>) {
 // ── createWorkspace ────────────────────────────────────────────────────────────
 
 describe('EmpresaService.createWorkspace', () => {
-  it('caso 1: email novo — cria usuário, envia email, retorna workspace e admin sem passwordHash', async () => {
+  it('cria workspace sem membros', async () => {
     const workspace = makeWorkspace();
-    const newAdmin = makeUser({ id: 'admin-new', email: 'new@acme.com', name: 'new' });
     const repo = makeRepo({
-      findUserByEmail: jest.fn().mockResolvedValue(null),
-      createWorkspaceWithNewAdmin: jest.fn().mockResolvedValue({ workspace, admin: newAdmin }),
+      createWorkspaceWithMembers: jest.fn().mockResolvedValue(workspace),
     });
-    const { service, mailerService, authService } = makeService(repo);
+    const { service } = makeService(repo);
 
-    const result = await service.createWorkspace(
-      'company-1',
-      { name: 'WS', adminEmail: 'new@acme.com' },
-      'creator-1',
+    const result = await service.createWorkspace('company-1', { name: 'WS' }, 'creator-1');
+
+    expect(repo.createWorkspaceWithMembers).toHaveBeenCalledWith(
+      expect.objectContaining({ memberIds: [], workspaceName: 'WS' }),
     );
-
-    expect(authService.generateFirstAccessToken).toHaveBeenCalledWith('admin-new');
     expect(result.workspace.id).toBe('ws-1');
-    expect((result.admin as Record<string, unknown>).passwordHash).toBeUndefined();
-    // fire-and-forget email
-    await new Promise((r) => setTimeout(r, 10));
-    expect(mailerService.sendFirstAccessEmail).toHaveBeenCalled();
   });
 
-  it('caso 1: usa prefixo do email como nome temporário', async () => {
+  it('cria workspace com membros selecionados', async () => {
     const workspace = makeWorkspace();
-    const newAdmin = makeUser({ id: 'admin-new', email: 'joao@acme.com', name: 'joao' });
     const repo = makeRepo({
-      findUserByEmail: jest.fn().mockResolvedValue(null),
-      createWorkspaceWithNewAdmin: jest.fn().mockResolvedValue({ workspace, admin: newAdmin }),
+      createWorkspaceWithMembers: jest.fn().mockResolvedValue(workspace),
     });
     const { service } = makeService(repo);
 
     await service.createWorkspace(
       'company-1',
-      { name: 'WS', adminEmail: 'joao@acme.com' },
+      { name: 'WS', memberIds: ['user-1', 'user-2'] },
       'creator-1',
     );
 
-    const callArg = repo.createWorkspaceWithNewAdmin.mock.calls[0][0] as Record<string, unknown>;
-    expect(callArg.adminName).toBe('joao');
-  });
-
-  it('caso 2: email existente — vincula usuário existente ao workspace sem enviar email', async () => {
-    const existingUser = makeUser({ id: 'existing-1', email: 'existing@acme.com' });
-    const workspace = makeWorkspace();
-    const repo = makeRepo({
-      findUserByEmail: jest.fn().mockResolvedValue(existingUser),
-      createWorkspaceWithExistingAdmin: jest.fn().mockResolvedValue(workspace),
-    });
-    const { service, mailerService, authService } = makeService(repo);
-
-    const result = await service.createWorkspace(
-      'company-1',
-      { name: 'WS', adminEmail: 'existing@acme.com' },
-      'creator-1',
+    expect(repo.createWorkspaceWithMembers).toHaveBeenCalledWith(
+      expect.objectContaining({ memberIds: ['user-1', 'user-2'] }),
     );
-
-    expect(repo.createWorkspaceWithExistingAdmin).toHaveBeenCalledWith(
-      expect.objectContaining({ adminUserId: 'existing-1' }),
-    );
-    expect(authService.generateFirstAccessToken).not.toHaveBeenCalled();
-    expect(mailerService.sendFirstAccessEmail).not.toHaveBeenCalled();
-    expect(result.workspace.id).toBe('ws-1');
-    expect((result.admin as Record<string, unknown>).passwordHash).toBeUndefined();
   });
 });
 

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -14,6 +15,8 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { MoveTaskDto } from './dto/move-task.dto';
 import { AssignTaskDto } from './dto/assign-task.dto';
+import { CreateLabelDto } from './dto/create-label.dto';
+import { UpdateLabelDto } from './dto/update-label.dto';
 
 @Injectable()
 export class ProjetoService {
@@ -133,11 +136,12 @@ export class ProjetoService {
       title: dto.title,
       description: dto.description,
       priority: dto.priority,
-      assigneeId: dto.assigneeId,
+      assigneeIds: dto.assigneeIds,
       reporterId: userId,
       createdById: userId,
       startDate: dto.startDate,
       dueDate: dto.dueDate,
+      labelIds: dto.labelIds,
     });
 
     this.logger.info({ projectId, taskId: task.id, createdById: userId }, 'Task created');
@@ -159,15 +163,69 @@ export class ProjetoService {
       updateData.startDate = dto.startDate ? new Date(dto.startDate) : null;
     if (dto.dueDate !== undefined)
       updateData.dueDate = dto.dueDate ? new Date(dto.dueDate) : null;
-    if (dto.assigneeId !== undefined) {
-      updateData.assignee = dto.assigneeId
-        ? { connect: { id: dto.assigneeId } }
-        : { disconnect: true };
+
+    await this.repo.updateTask(taskId, updateData);
+
+    if (dto.labelIds !== undefined) {
+      await this.repo.updateTaskLabels(taskId, dto.labelIds);
     }
 
-    const updated = await this.repo.updateTask(taskId, updateData);
+    if (dto.assigneeIds !== undefined) {
+      await this.repo.updateTaskAssignees(taskId, dto.assigneeIds);
+    }
+
+    const finalTask = await this.repo.findTaskById(taskId, projectId);
+
+    // Record history
+    const fmt = (d: Date | null | undefined): string | null =>
+      d ? d.toISOString().split('T')[0] : null;
+
+    const entries: { field: string; oldValue: string | null; newValue: string | null }[] = [];
+
+    if (task.title !== finalTask!.title)
+      entries.push({ field: 'title', oldValue: task.title, newValue: finalTask!.title });
+
+    if ((task.description ?? null) !== (finalTask!.description ?? null))
+      entries.push({
+        field: 'description',
+        oldValue: task.description ?? null,
+        newValue: finalTask!.description ?? null,
+      });
+
+    if (task.priority !== finalTask!.priority)
+      entries.push({ field: 'priority', oldValue: task.priority, newValue: finalTask!.priority });
+
+    if (fmt(task.startDate) !== fmt(finalTask!.startDate))
+      entries.push({
+        field: 'startDate',
+        oldValue: fmt(task.startDate),
+        newValue: fmt(finalTask!.startDate),
+      });
+
+    if (fmt(task.dueDate) !== fmt(finalTask!.dueDate))
+      entries.push({
+        field: 'dueDate',
+        oldValue: fmt(task.dueDate),
+        newValue: fmt(finalTask!.dueDate),
+      });
+
+    const oldAssignees = task.taskAssignees.map((a) => a.user.name).sort().join(', ') || null;
+    const newAssignees =
+      finalTask!.taskAssignees.map((a) => a.user.name).sort().join(', ') || null;
+    if (oldAssignees !== newAssignees)
+      entries.push({ field: 'assignees', oldValue: oldAssignees, newValue: newAssignees });
+
+    const oldLabels = task.taskLabels.map((l) => l.label.name).sort().join(', ') || null;
+    const newLabels = finalTask!.taskLabels.map((l) => l.label.name).sort().join(', ') || null;
+    if (oldLabels !== newLabels)
+      entries.push({ field: 'labels', oldValue: oldLabels, newValue: newLabels });
+
+    await this.repo.createTaskHistories(
+      entries.map((e) => ({ ...e, taskId, userId: performedById })),
+    );
+
     this.logger.info({ projectId, taskId, changes: dto, performedById }, 'Task updated');
-    return updated;
+    return finalTask;
   }
 
   async moveTask(projectId: string, taskId: string, dto: MoveTaskDto, performedById: string) {
@@ -176,18 +234,46 @@ export class ProjetoService {
       throw new NotFoundException('Task não encontrada');
     }
 
-    const column = await this.repo.findColumnById(dto.columnId, projectId);
-    if (!column) {
+    const targetColumn = await this.repo.findColumnById(dto.columnId, projectId);
+    if (!targetColumn) {
       throw new NotFoundException('Coluna de destino não encontrada');
     }
 
+    const isColumnChange = task.columnId !== dto.columnId;
+    let sourceColumnName: string | null = null;
+    if (isColumnChange) {
+      const sourceColumn = await this.repo.findColumnById(task.columnId, projectId);
+      sourceColumnName = sourceColumn?.name ?? null;
+    }
+
     await this.repo.moveTask(taskId, dto.columnId, dto.afterTaskId);
+
+    if (isColumnChange) {
+      await this.repo.createTaskHistories([
+        {
+          taskId,
+          userId: performedById,
+          field: 'column',
+          oldValue: sourceColumnName,
+          newValue: targetColumn.name,
+        },
+      ]);
+    }
+
     this.logger.info(
       { projectId, taskId, columnId: dto.columnId, afterTaskId: dto.afterTaskId, performedById },
       'Task moved',
     );
 
     return this.repo.findTaskById(taskId, projectId);
+  }
+
+  async getTaskHistory(projectId: string, taskId: string) {
+    const task = await this.repo.findTaskById(taskId, projectId);
+    if (!task) {
+      throw new NotFoundException('Task não encontrada');
+    }
+    return this.repo.getTaskHistory(taskId);
   }
 
   async deleteTask(projectId: string, taskId: string, performedById: string) {
@@ -206,18 +292,13 @@ export class ProjetoService {
       throw new NotFoundException('Task não encontrada');
     }
 
-    const updateData: Prisma.TaskUpdateInput = {
-      assignee: dto.assigneeId
-        ? { connect: { id: dto.assigneeId } }
-        : { disconnect: true },
-    };
-
-    const updated = await this.repo.updateTask(taskId, updateData);
+    const userIds = dto.assigneeId ? [dto.assigneeId] : [];
+    await this.repo.updateTaskAssignees(taskId, userIds);
     this.logger.info(
       { projectId, taskId, assigneeId: dto.assigneeId, performedById },
       'Task assigned',
     );
-    return updated;
+    return this.repo.findTaskById(taskId, projectId);
   }
 
   // ── Membros ───────────────────────────────────────────────────────────────────
@@ -229,5 +310,47 @@ export class ProjetoService {
     }
 
     return this.repo.findWorkspaceMembersByProject(projectId);
+  }
+
+  // ── Labels ────────────────────────────────────────────────────────────────────
+
+  async listLabels(projectId: string) {
+    const project = await this.repo.findProjectById(projectId);
+    if (!project) throw new NotFoundException('Projeto não encontrado');
+    return this.repo.findLabelsByProject(projectId);
+  }
+
+  async createLabel(projectId: string, dto: CreateLabelDto, performedById: string) {
+    const project = await this.repo.findProjectById(projectId);
+    if (!project) throw new NotFoundException('Projeto não encontrado');
+
+    try {
+      const label = await this.repo.createLabel({
+        projectId,
+        name: dto.name,
+        color: dto.color ?? '#6366f1',
+      });
+      this.logger.info({ projectId, labelId: label.id, performedById }, 'Label created');
+      return label;
+    } catch {
+      throw new ConflictException('Já existe uma label com este nome neste projeto');
+    }
+  }
+
+  async updateLabel(projectId: string, labelId: string, dto: UpdateLabelDto, performedById: string) {
+    const label = await this.repo.findLabelById(labelId, projectId);
+    if (!label) throw new NotFoundException('Label não encontrada');
+
+    const updated = await this.repo.updateLabel(labelId, dto);
+    this.logger.info({ projectId, labelId, changes: dto, performedById }, 'Label updated');
+    return updated;
+  }
+
+  async deleteLabel(projectId: string, labelId: string, performedById: string) {
+    const label = await this.repo.findLabelById(labelId, projectId);
+    if (!label) throw new NotFoundException('Label não encontrada');
+
+    await this.repo.softDeleteLabel(labelId);
+    this.logger.info({ projectId, labelId, performedById }, 'Label soft-deleted');
   }
 }

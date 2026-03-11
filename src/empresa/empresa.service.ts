@@ -16,6 +16,7 @@ import { EmpresaRepository } from './empresa.repository';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { ListMembersQueryDto } from './dto/list-members-query.dto';
 import { ListWorkspacesQueryDto } from './dto/list-workspaces-query.dto';
+import { ContratarMembroDto } from './dto/contratar-membro.dto';
 import { PromoteMemberDto } from './dto/promote-member.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 
@@ -33,63 +34,22 @@ export class EmpresaService {
   // ── Workspaces ────────────────────────────────────────────────────────────────
 
   async createWorkspace(companyId: string, dto: CreateWorkspaceDto, createdById: string) {
-    const existingUser = await this.repo.findUserByEmail(dto.adminEmail);
+    const memberIds = dto.memberIds ?? [];
 
-    if (!existingUser) {
-      // Caso 1: email novo no sistema — criar usuário + vincular à empresa + vincular ao workspace
-      const tempName = dto.adminEmail.split('@')[0];
-      const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
-
-      const result = await this.repo.createWorkspaceWithNewAdmin({
-        workspaceName: dto.name,
-        workspaceDescription: dto.description,
-        companyId,
-        createdById,
-        adminEmail: dto.adminEmail,
-        adminName: tempName,
-        adminPasswordHash: placeholderHash,
-      });
-
-      const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
-      const rawToken = await this.authService.generateFirstAccessToken(result.admin.id);
-      const magicLink = `${frontendUrl}/first-access?token=${rawToken}`;
-
-      this.mailerService
-        .sendFirstAccessEmail(dto.adminEmail, tempName, magicLink)
-        .catch((err: unknown) => {
-          this.logger.error(
-            { adminEmail: dto.adminEmail, err },
-            'Failed to send first access email — workspace was created successfully',
-          );
-        });
-
-      this.logger.info(
-        { companyId, workspaceId: result.workspace.id, adminId: result.admin.id, createdById },
-        'Workspace created with new admin user',
-      );
-
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { passwordHash: _ph, ...adminWithoutPassword } = result.admin;
-      return { workspace: result.workspace, admin: adminWithoutPassword };
-    }
-
-    // Caso 2: email já existe no sistema — vincular diretamente ao workspace como workspace_admin
-    const workspace = await this.repo.createWorkspaceWithExistingAdmin({
+    const workspace = await this.repo.createWorkspaceWithMembers({
       workspaceName: dto.name,
       workspaceDescription: dto.description,
       companyId,
       createdById,
-      adminUserId: existingUser.id,
+      memberIds,
     });
 
     this.logger.info(
-      { companyId, workspaceId: workspace.id, adminId: existingUser.id, createdById },
-      'Workspace created with existing user as workspace admin',
+      { companyId, workspaceId: workspace.id, memberCount: memberIds.length, createdById },
+      'Workspace created',
     );
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { passwordHash: _ph, ...adminWithoutPassword } = existingUser;
-    return { workspace, admin: adminWithoutPassword };
+    return { workspace };
   }
 
   async listWorkspaces(companyId: string, query: ListWorkspacesQueryDto) {
@@ -166,6 +126,35 @@ export class EmpresaService {
   }
 
   // ── Membros ───────────────────────────────────────────────────────────────────
+
+  async contratarMembro(companyId: string, dto: ContratarMembroDto, performedById: string) {
+    const existing = await this.repo.findUserByEmail(dto.email);
+    if (existing) {
+      throw new ConflictException('Email já cadastrado no sistema');
+    }
+
+    const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
+    const user = await this.repo.createUserWithCompanyMembership({
+      name: dto.name,
+      email: dto.email,
+      phone: dto.phone,
+      passwordHash: placeholderHash,
+      companyId,
+    });
+
+    const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
+    const rawToken = await this.authService.generateFirstAccessToken(user.id);
+    const magicLink = `${frontendUrl}/first-access?token=${rawToken}`;
+
+    this.mailerService
+      .sendFirstAccessEmail(dto.email, dto.name, magicLink)
+      .catch((err: unknown) => {
+        this.logger.error({ email: dto.email, err }, 'Failed to send first access email');
+      });
+
+    this.logger.info({ companyId, userId: user.id, performedById }, 'Member hired to company');
+    return user;
+  }
 
   async listMembers(companyId: string, query: ListMembersQueryDto) {
     const { search, isActive, page = 1, limit = 20 } = query;
@@ -434,7 +423,8 @@ export class EmpresaService {
   /**
    * Retorna todos os papéis de um membro nesta empresa:
    * - papel na empresa (admin | member | null se veio só via workspace)
-   * - papel em cada workspace (workspace_admin | member | null se não é membro)
+   * - papel em cada workspace (workspace_admin | project_admin | member | null se não é membro)
+   * - papéis por projeto dentro de cada workspace (project_admin membership + restrições)
    */
   async getMemberRoles(companyId: string, targetUserId: string) {
     const user = await this.repo.findUserById(targetUserId);
@@ -456,14 +446,46 @@ export class EmpresaService {
         .map((m) => [m.resourceId, m]),
     );
 
-    const workspaceRoles = workspaces.map((ws) => {
+    // Fetch all projects per workspace and project-level memberships/restrictions in parallel
+    const projectsByWorkspace = await Promise.all(
+      workspaceIds.map((wsId) => this.repo.findProjectsByWorkspace(wsId)),
+    );
+    const allProjectIds = projectsByWorkspace.flat().map((p) => p.id);
+
+    const [projectMemberships, projectRestrictions] = await Promise.all([
+      allProjectIds.length > 0
+        ? this.repo.findMemberships({
+            userId: targetUserId,
+            resourceType: ResourceType.project,
+            resourceId: { in: allProjectIds },
+            deletedAt: null,
+          })
+        : Promise.resolve([]),
+      allProjectIds.length > 0
+        ? this.repo.findProjectRestrictionsByUser(targetUserId, allProjectIds)
+        : Promise.resolve([]),
+    ]);
+
+    const projectAdminSet = new Set(projectMemberships.map((m) => m.resourceId));
+    const restrictedProjectSet = new Set(projectRestrictions.map((r) => r.projectId));
+
+    const workspaceRoles = workspaces.map((ws, i) => {
       const m = workspaceMembershipsMap.get(ws.id);
+      const projects = projectsByWorkspace[i].map((p) => ({
+        projectId: p.id,
+        projectName: p.name,
+        isActive: p.isActive,
+        isRestricted: restrictedProjectSet.has(p.id),
+        isProjectAdmin: projectAdminSet.has(p.id),
+      }));
+
       return {
         workspaceId: ws.id,
         workspaceName: ws.name,
         isActive: ws.isActive,
         membershipId: m?.id ?? null,
         role: m?.role ?? null,
+        projects,
       };
     });
 
@@ -473,6 +495,264 @@ export class EmpresaService {
       companyMembershipId: companyMembership?.id ?? null,
       workspaceRoles,
     };
+  }
+
+  /**
+   * Define o papel de um membro em um workspace específico via dropdown.
+   * role: 'workspace_admin' | 'project_admin' | 'member' | null (sem acesso)
+   */
+  async setWorkspaceMemberRole(
+    companyId: string,
+    workspaceId: string,
+    userId: string,
+    role: 'workspace_admin' | 'project_admin' | 'member' | null,
+    performedById: string,
+  ) {
+    await this.assertNotCompanyAdmin(companyId, userId);
+
+    const workspace = await this.repo.findWorkspaceById(workspaceId, companyId);
+    if (!workspace) throw new NotFoundException('Workspace não encontrado');
+
+    const existing = await this.repo.findMembership({
+      userId,
+      resourceType: ResourceType.workspace,
+      resourceId: workspaceId,
+      deletedAt: null,
+    });
+
+    if (role === null) {
+      // Sem acesso: remove workspace membership
+      if (!existing) return;
+      await this.repo.updateMembership(existing.id, { deletedAt: new Date() });
+      // Remove project memberships for this workspace's projects
+      const projects = await this.repo.findProjectsByWorkspace(workspaceId);
+      const projectIds = projects.map((p) => p.id);
+      if (projectIds.length > 0) {
+        await this.repo.updateManyMemberships(
+          { userId, resourceType: ResourceType.project, resourceId: { in: projectIds }, deletedAt: null },
+          { deletedAt: new Date() },
+        );
+      }
+      this.logger.info({ companyId, workspaceId, userId, performedById }, 'Workspace access removed');
+      return;
+    }
+
+    if (existing) {
+      if (existing.role === role) return existing;
+      const updated = await this.repo.updateMembershipSelect(existing.id, { role });
+      this.logger.info({ companyId, workspaceId, userId, role, performedById }, 'Workspace role updated');
+      return updated;
+    }
+
+    // Ensure company membership
+    const companyMembership = await this.repo.findMembership({
+      userId,
+      resourceType: ResourceType.company,
+      resourceId: companyId,
+      deletedAt: null,
+    });
+    if (!companyMembership) {
+      await this.repo.createMembership({
+        userId,
+        resourceType: ResourceType.company,
+        resourceId: companyId,
+        role: MembershipRole.member,
+      });
+    }
+
+    const membership = await this.repo.createMembershipSelect({
+      userId,
+      resourceType: ResourceType.workspace,
+      resourceId: workspaceId,
+      role: role as MembershipRole,
+    });
+
+    this.logger.info({ companyId, workspaceId, userId, role, performedById }, 'Workspace membership created');
+    return membership;
+  }
+
+  async restrictProject(
+    companyId: string,
+    workspaceId: string,
+    projectId: string,
+    userId: string,
+    performedById: string,
+  ) {
+    const workspace = await this.repo.findWorkspaceById(workspaceId, companyId);
+    if (!workspace) throw new NotFoundException('Workspace não encontrado');
+
+    const existing = await this.repo.findProjectRestriction(userId, projectId);
+    if (existing) throw new ConflictException('Restrição já existe para este usuário/projeto');
+
+    await this.repo.createProjectRestriction(userId, projectId);
+
+    // If user is project_admin for this project, revoke that role
+    const projectAdminMembership = await this.repo.findMembership({
+      userId,
+      resourceType: ResourceType.project,
+      resourceId: projectId,
+      deletedAt: null,
+    });
+    if (projectAdminMembership) {
+      await this.repo.updateMembership(projectAdminMembership.id, { deletedAt: new Date() });
+    }
+
+    this.logger.info({ companyId, workspaceId, projectId, userId, performedById }, 'Project restricted');
+  }
+
+  async unrestrictProject(
+    companyId: string,
+    workspaceId: string,
+    projectId: string,
+    userId: string,
+    performedById: string,
+  ) {
+    const workspace = await this.repo.findWorkspaceById(workspaceId, companyId);
+    if (!workspace) throw new NotFoundException('Workspace não encontrado');
+
+    await this.repo.deleteProjectRestriction(userId, projectId);
+    this.logger.info({ companyId, workspaceId, projectId, userId, performedById }, 'Project unrestricted');
+  }
+
+  async setProjectAdmin(
+    companyId: string,
+    workspaceId: string,
+    projectId: string,
+    userId: string,
+    performedById: string,
+  ) {
+    await this.assertNotCompanyAdmin(companyId, userId);
+
+    const workspace = await this.repo.findWorkspaceById(workspaceId, companyId);
+    if (!workspace) throw new NotFoundException('Workspace não encontrado');
+
+    // User must have workspace membership
+    const workspaceMembership = await this.repo.findMembership({
+      userId,
+      resourceType: ResourceType.workspace,
+      resourceId: workspaceId,
+      deletedAt: null,
+    });
+    if (!workspaceMembership) throw new NotFoundException('Usuário não é membro deste workspace');
+
+    const existing = await this.repo.findMembership({
+      userId,
+      resourceType: ResourceType.project,
+      resourceId: projectId,
+      deletedAt: null,
+    });
+    if (existing) throw new ConflictException('Usuário já é gerente deste projeto');
+
+    const membership = await this.repo.createMembershipSelect({
+      userId,
+      resourceType: ResourceType.project,
+      resourceId: projectId,
+      role: MembershipRole.project_admin,
+    });
+
+    this.logger.info({ companyId, workspaceId, projectId, userId, performedById }, 'Project admin set');
+    return membership;
+  }
+
+  async revokeProjectAdmin(
+    companyId: string,
+    workspaceId: string,
+    projectId: string,
+    userId: string,
+    performedById: string,
+  ) {
+    const workspace = await this.repo.findWorkspaceById(workspaceId, companyId);
+    if (!workspace) throw new NotFoundException('Workspace não encontrado');
+
+    const membership = await this.repo.findMembership({
+      userId,
+      resourceType: ResourceType.project,
+      resourceId: projectId,
+      role: MembershipRole.project_admin,
+      deletedAt: null,
+    });
+    if (!membership) throw new NotFoundException('Papel de gerente de projeto não encontrado');
+
+    await this.repo.updateMembership(membership.id, { deletedAt: new Date() });
+    this.logger.info({ companyId, workspaceId, projectId, userId, performedById }, 'Project admin revoked');
+  }
+
+  async addWorkspaceMember(
+    companyId: string,
+    workspaceId: string,
+    userId: string,
+    performedById: string,
+  ) {
+    const workspace = await this.repo.findWorkspaceById(workspaceId, companyId);
+    if (!workspace) throw new NotFoundException('Workspace não encontrado');
+
+    const existing = await this.repo.findMembership({
+      userId,
+      resourceType: ResourceType.workspace,
+      resourceId: workspaceId,
+      deletedAt: null,
+    });
+    if (existing) throw new ConflictException('Usuário já é membro deste workspace');
+
+    const membership = await this.repo.createMembershipSelect({
+      userId,
+      resourceType: ResourceType.workspace,
+      resourceId: workspaceId,
+      role: MembershipRole.member,
+    });
+
+    // Ensure company membership exists
+    const companyMembership = await this.repo.findMembership({
+      userId,
+      resourceType: ResourceType.company,
+      resourceId: companyId,
+      deletedAt: null,
+    });
+    if (!companyMembership) {
+      await this.repo.createMembership({
+        userId,
+        resourceType: ResourceType.company,
+        resourceId: companyId,
+        role: MembershipRole.member,
+      });
+    }
+
+    this.logger.info({ companyId, workspaceId, userId, performedById }, 'Member added to workspace');
+    return membership;
+  }
+
+  async removeWorkspaceMember(
+    companyId: string,
+    workspaceId: string,
+    userId: string,
+    performedById: string,
+  ) {
+    if (userId === performedById) {
+      throw new BadRequestException('Não é possível remover a si mesmo do workspace');
+    }
+
+    const workspace = await this.repo.findWorkspaceById(workspaceId, companyId);
+    if (!workspace) throw new NotFoundException('Workspace não encontrado');
+
+    const membership = await this.repo.findMembership({
+      userId,
+      resourceType: ResourceType.workspace,
+      resourceId: workspaceId,
+      deletedAt: null,
+    });
+    if (!membership) throw new NotFoundException('Membro não encontrado neste workspace');
+
+    if (membership.role === MembershipRole.workspace_admin) {
+      throw new ForbiddenException(
+        'Revogue o papel de workspace_admin antes de remover o membro',
+      );
+    }
+
+    await this.repo.updateMembership(membership.id, { deletedAt: new Date() });
+    this.logger.info(
+      { companyId, workspaceId, userId, performedById },
+      'Member removed from workspace',
+    );
   }
 
   async promoteToWorkspaceAdmin(

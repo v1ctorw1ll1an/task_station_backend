@@ -38,7 +38,8 @@ function makeTask(overrides: Record<string, unknown> = {}) {
     startDate: null,
     columnId: 'col-1',
     projectId: 'project-1',
-    assignee: null,
+    taskAssignees: [],
+    taskLabels: [],
     reporter: { id: 'user-1', name: 'User' },
     ...overrides,
   };
@@ -61,6 +62,8 @@ function makeRepo(
     findAllTasksByProject: jest.fn(),
     createTask: jest.fn(),
     updateTask: jest.fn(),
+    updateTaskAssignees: jest.fn(),
+    updateTaskLabels: jest.fn(),
     softDeleteTask: jest.fn(),
     moveTask: jest.fn(),
     getKanban: jest.fn(),
@@ -262,9 +265,11 @@ describe('ProjetoService', () => {
   describe('updateTask', () => {
     it('atualiza task com sucesso', async () => {
       const repo = makeRepo();
-      repo.findTaskById.mockResolvedValue(makeTask());
       const updated = makeTask({ title: 'Atualizada' });
+      repo.findTaskById.mockResolvedValueOnce(makeTask()).mockResolvedValueOnce(updated);
       repo.updateTask.mockResolvedValue(updated);
+      repo.updateTaskLabels.mockResolvedValue([] as never);
+      repo.updateTaskAssignees.mockResolvedValue([{ count: 0 }] as never);
       const service = makeService(repo);
 
       const result = await service.updateTask('project-1', 'task-1', { title: 'Atualizada' }, 'user-1');
@@ -346,9 +351,9 @@ describe('ProjetoService', () => {
   describe('assignTask', () => {
     it('atribui assignee com sucesso', async () => {
       const repo = makeRepo();
-      repo.findTaskById.mockResolvedValue(makeTask());
-      const updated = makeTask({ assignee: { id: 'user-2', name: 'Ana' } });
-      repo.updateTask.mockResolvedValue(updated);
+      const taskWithAssignee = makeTask({ taskAssignees: [{ user: { id: 'user-2', name: 'Ana' } }] });
+      repo.findTaskById.mockResolvedValueOnce(makeTask()).mockResolvedValueOnce(taskWithAssignee);
+      repo.updateTaskAssignees.mockResolvedValue([{ count: 0 }] as never);
       const service = makeService(repo);
 
       const result = await service.assignTask(
@@ -358,19 +363,19 @@ describe('ProjetoService', () => {
         'user-1',
       );
 
-      expect(result.assignee).toEqual({ id: 'user-2', name: 'Ana' });
+      expect(repo.updateTaskAssignees).toHaveBeenCalledWith('task-1', ['user-2']);
+      expect(result?.taskAssignees[0]?.user).toEqual({ id: 'user-2', name: 'Ana' });
     });
 
     it('remove assignee quando assigneeId é undefined', async () => {
       const repo = makeRepo();
       repo.findTaskById.mockResolvedValue(makeTask());
-      const updated = makeTask({ assignee: null });
-      repo.updateTask.mockResolvedValue(updated);
+      repo.updateTaskAssignees.mockResolvedValue([{ count: 0 }] as never);
       const service = makeService(repo);
 
-      const result = await service.assignTask('project-1', 'task-1', {}, 'user-1');
+      await service.assignTask('project-1', 'task-1', {}, 'user-1');
 
-      expect(result.assignee).toBeNull();
+      expect(repo.updateTaskAssignees).toHaveBeenCalledWith('task-1', []);
     });
 
     it('lança NotFoundException se task não existe', async () => {

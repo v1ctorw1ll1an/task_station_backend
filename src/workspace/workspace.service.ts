@@ -41,23 +41,44 @@ export class WorkspaceService {
     return result;
   }
 
-  async listProjects(workspaceId: string, query: ListProjectsQueryDto, isAdmin = false) {
+  async listProjects(
+    workspaceId: string,
+    query: ListProjectsQueryDto,
+    isAdmin = false,
+    userId?: string,
+  ) {
     const { isActive, page = 1, limit = 20 } = query;
 
-    const where: { workspaceId: string; deletedAt: null; isActive?: boolean } = {
-      workspaceId,
-      deletedAt: null,
-    };
+    const where: {
+      workspaceId: string;
+      deletedAt: null;
+      isActive?: boolean;
+      id?: { notIn: string[] };
+    } = { workspaceId, deletedAt: null };
 
     if (!isAdmin) {
       // Membros regulares só enxergam projetos ativos (RF025)
       where.isActive = true;
+
+      // Filtrar projetos restritos para este usuário
+      if (userId) {
+        const restricted = await this.repo.findRestrictedProjectIds(workspaceId, userId);
+        if (restricted.length > 0) {
+          where.id = { notIn: restricted.map((r) => r.projectId) };
+        }
+      }
     } else if (isActive !== undefined) {
       where.isActive = isActive;
     }
 
     const [data, total] = await this.repo.findProjects(where, page, limit);
     return { data, total, page, limit };
+  }
+
+  async getInfo(workspaceId: string) {
+    const workspace = await this.repo.findWorkspaceById(workspaceId);
+    if (!workspace) throw new NotFoundException('Workspace não encontrado');
+    return workspace;
   }
 
   async getProject(workspaceId: string, projectId: string) {

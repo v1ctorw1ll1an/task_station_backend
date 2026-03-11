@@ -27,26 +27,53 @@ export class ProjetoAdminGuard implements CanActivate {
 
     const project = await this.prisma.project.findFirst({
       where: { id: projectId, deletedAt: null },
-      select: { workspaceId: true },
+      select: {
+        workspaceId: true,
+        workspace: { select: { companyId: true } },
+      },
     });
 
     if (!project) {
       throw new NotFoundException('Projeto não encontrado');
     }
 
-    const membership = await this.prisma.membership.findFirst({
-      where: {
-        userId: user.id,
-        resourceType: 'workspace',
-        resourceId: project.workspaceId,
-        role: 'workspace_admin',
-        deletedAt: null,
-      },
-      select: { id: true },
-    });
+    // workspace_admin OU project_admin neste projeto OU admin da empresa
+    const [workspaceAdminMembership, projectAdminMembership, companyAdminMembership] =
+      await Promise.all([
+        this.prisma.membership.findFirst({
+          where: {
+            userId: user.id,
+            resourceType: 'workspace',
+            resourceId: project.workspaceId,
+            role: 'workspace_admin',
+            deletedAt: null,
+          },
+          select: { id: true },
+        }),
+        this.prisma.membership.findFirst({
+          where: {
+            userId: user.id,
+            resourceType: 'project',
+            resourceId: projectId,
+            role: 'project_admin',
+            deletedAt: null,
+          },
+          select: { id: true },
+        }),
+        this.prisma.membership.findFirst({
+          where: {
+            userId: user.id,
+            resourceType: 'company',
+            resourceId: project.workspace.companyId,
+            role: 'admin',
+            deletedAt: null,
+          },
+          select: { id: true },
+        }),
+      ]);
 
-    if (!membership) {
-      throw new ForbiddenException('Acesso restrito a administradores deste workspace');
+    if (!workspaceAdminMembership && !projectAdminMembership && !companyAdminMembership) {
+      throw new ForbiddenException('Acesso restrito a administradores deste projeto');
     }
 
     return true;
