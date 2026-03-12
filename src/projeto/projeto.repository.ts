@@ -10,6 +10,7 @@ const TASK_SELECT = {
   order: true,
   dueDate: true,
   startDate: true,
+  updatedAt: true,
   columnId: true,
   projectId: true,
   taskAssignees: { select: { user: { select: { id: true, name: true } } } },
@@ -224,9 +225,7 @@ export class ProjetoRepository {
   async updateTaskLabels(taskId: string, labelIds: string[]) {
     return this.prisma.$transaction([
       this.prisma.taskLabel.deleteMany({ where: { taskId } }),
-      ...labelIds.map((labelId) =>
-        this.prisma.taskLabel.create({ data: { taskId, labelId } }),
-      ),
+      ...labelIds.map((labelId) => this.prisma.taskLabel.create({ data: { taskId, labelId } })),
     ]);
   }
 
@@ -465,7 +464,13 @@ export class ProjetoRepository {
   // ── Task History ──────────────────────────────────────────────────────────────
 
   createTaskHistories(
-    entries: { taskId: string; userId: string; field: string; oldValue: string | null; newValue: string | null }[],
+    entries: {
+      taskId: string;
+      userId: string;
+      field: string;
+      oldValue: string | null;
+      newValue: string | null;
+    }[],
   ) {
     if (entries.length === 0) return Promise.resolve({ count: 0 });
     return this.prisma.taskHistory.createMany({ data: entries });

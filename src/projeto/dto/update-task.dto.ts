@@ -2,6 +2,7 @@ import {
   IsArray,
   IsDateString,
   IsEnum,
+  IsISO8601,
   IsOptional,
   IsString,
   IsUUID,
@@ -42,4 +43,9 @@ export class UpdateTaskDto {
   @IsArray()
   @IsUUID('4', { each: true })
   labelIds?: string[];
+
+  /** ISO timestamp do último updatedAt conhecido pelo cliente — usado para detecção de conflito */
+  @IsOptional()
+  @IsISO8601()
+  lastKnownUpdatedAt?: string;
 }

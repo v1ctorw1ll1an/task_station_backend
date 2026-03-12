@@ -65,7 +65,12 @@ export class ProjetoService {
     return coluna;
   }
 
-  async updateColuna(projectId: string, columnId: string, dto: UpdateColunaDto, performedById: string) {
+  async updateColuna(
+    projectId: string,
+    columnId: string,
+    dto: UpdateColunaDto,
+    performedById: string,
+  ) {
     const column = await this.repo.findColumnById(columnId, projectId);
     if (!column) {
       throw new NotFoundException('Coluna não encontrada');
@@ -88,7 +93,12 @@ export class ProjetoService {
     return this.repo.findColumnsByProject(projectId);
   }
 
-  async deleteColuna(projectId: string, columnId: string, dto: DeleteColunaDto, performedById: string) {
+  async deleteColuna(
+    projectId: string,
+    columnId: string,
+    dto: DeleteColunaDto,
+    performedById: string,
+  ) {
     const column = await this.repo.findColumnById(columnId, projectId);
     if (!column) {
       throw new NotFoundException('Coluna não encontrada');
@@ -157,6 +167,17 @@ export class ProjetoService {
       throw new NotFoundException('Task não encontrada');
     }
 
+    // Optimistic locking: rejeita se o cliente tem uma versão desatualizada
+    if (dto.lastKnownUpdatedAt) {
+      const clientTs = new Date(dto.lastKnownUpdatedAt).getTime();
+      const serverTs = task.updatedAt.getTime();
+      if (Math.abs(clientTs - serverTs) > 0 && clientTs < serverTs) {
+        throw new ConflictException(
+          'Esta task foi modificada por outro usuário. Recarregue para ver as alterações mais recentes.',
+        );
+      }
+    }
+
     const updateData: Prisma.TaskUpdateInput = {};
 
     if (dto.title !== undefined) updateData.title = dto.title;
@@ -164,8 +185,7 @@ export class ProjetoService {
     if (dto.priority !== undefined) updateData.priority = dto.priority;
     if (dto.startDate !== undefined)
       updateData.startDate = dto.startDate ? new Date(dto.startDate) : null;
-    if (dto.dueDate !== undefined)
-      updateData.dueDate = dto.dueDate ? new Date(dto.dueDate) : null;
+    if (dto.dueDate !== undefined) updateData.dueDate = dto.dueDate ? new Date(dto.dueDate) : null;
 
     await this.repo.updateTask(taskId, updateData);
 
@@ -212,14 +232,29 @@ export class ProjetoService {
         newValue: fmt(finalTask!.dueDate),
       });
 
-    const oldAssignees = task.taskAssignees.map((a) => a.user.name).sort().join(', ') || null;
+    const oldAssignees =
+      task.taskAssignees
+        .map((a) => a.user.name)
+        .sort()
+        .join(', ') || null;
     const newAssignees =
-      finalTask!.taskAssignees.map((a) => a.user.name).sort().join(', ') || null;
+      finalTask!.taskAssignees
+        .map((a) => a.user.name)
+        .sort()
+        .join(', ') || null;
     if (oldAssignees !== newAssignees)
       entries.push({ field: 'assignees', oldValue: oldAssignees, newValue: newAssignees });
 
-    const oldLabels = task.taskLabels.map((l) => l.label.name).sort().join(', ') || null;
-    const newLabels = finalTask!.taskLabels.map((l) => l.label.name).sort().join(', ') || null;
+    const oldLabels =
+      task.taskLabels
+        .map((l) => l.label.name)
+        .sort()
+        .join(', ') || null;
+    const newLabels =
+      finalTask!.taskLabels
+        .map((l) => l.label.name)
+        .sort()
+        .join(', ') || null;
     if (oldLabels !== newLabels)
       entries.push({ field: 'labels', oldValue: oldLabels, newValue: newLabels });
 
@@ -340,7 +375,12 @@ export class ProjetoService {
     }
   }
 
-  async updateLabel(projectId: string, labelId: string, dto: UpdateLabelDto, performedById: string) {
+  async updateLabel(
+    projectId: string,
+    labelId: string,
+    dto: UpdateLabelDto,
+    performedById: string,
+  ) {
     const label = await this.repo.findLabelById(labelId, projectId);
     if (!label) throw new NotFoundException('Label não encontrada');
 
