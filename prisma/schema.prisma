@@ -67,6 +67,7 @@ model User {
   passwordResetTokens     PasswordResetToken[]
   taskHistories           TaskHistory[]
   taskComments            TaskComment[]
+  taskAttachments         TaskAttachment[]
 
   @@index([deletedAt])
   @@map("users")
@@ -166,10 +167,11 @@ model Task {
   column     Column     @relation(fields: [columnId],   references: [id])
   reporter      User           @relation("TaskReporter",  fields: [reporterId],  references: [id])
   createdBy     User           @relation("TaskCreatedBy", fields: [createdById], references: [id])
-  taskLabels    TaskLabel[]
-  taskAssignees TaskAssignee[]
-  taskHistory   TaskHistory[]
-  taskComments  TaskComment[]
+  taskLabels       TaskLabel[]
+  taskAssignees    TaskAssignee[]
+  taskHistory      TaskHistory[]
+  taskComments     TaskComment[]
+  taskAttachments  TaskAttachment[]
 
   @@index([columnId, order])
   @@index([projectId, deletedAt])
@@ -295,4 +297,23 @@ model TaskComment {
 
   @@index([taskId, deletedAt])
   @@map("task_comments")
+}
+
+model TaskAttachment {
+  id           String    @id @default(uuid())
+  taskId       String    @map("task_id")
+  uploadedById String    @map("uploaded_by")
+  originalName String    @map("original_name")
+  storedName   String    @map("stored_name")
+  mimeType     String    @map("mime_type")
+  size         Int
+  hasThumbnail Boolean   @default(false) @map("has_thumbnail")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  deletedAt    DateTime?                @map("deleted_at")
+
+  task       Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  uploadedBy User @relation(fields: [uploadedById], references: [id])
+
+  @@index([taskId, deletedAt])
+  @@map("task_attachments")
 }

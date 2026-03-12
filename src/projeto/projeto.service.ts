@@ -324,6 +324,21 @@ export class ProjetoService {
     this.logger.info({ projectId, taskId, performedById }, 'Task soft-deleted');
   }
 
+  async getDeletedTasks(projectId: string) {
+    return this.repo.findDeletedTasks(projectId);
+  }
+
+  async restoreTask(projectId: string, taskId: string, performedById: string) {
+    const deleted = await this.repo.findDeletedTaskById(taskId, projectId);
+    if (!deleted) {
+      throw new NotFoundException('Task não encontrada na lixeira');
+    }
+
+    const restored = await this.repo.restoreTask(taskId);
+    this.logger.info({ projectId, taskId, performedById }, 'Task restored');
+    return restored;
+  }
+
   async assignTask(projectId: string, taskId: string, dto: AssignTaskDto, performedById: string) {
     const task = await this.repo.findTaskById(taskId, projectId);
     if (!task) {

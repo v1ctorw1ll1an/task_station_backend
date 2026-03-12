@@ -9,14 +9,21 @@ import {
   Patch,
   Post,
   Request,
+  Res,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { Response } from 'express';
+import { createReadStream } from 'fs';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthUser } from '../auth/strategies/jwt.strategy';
 import { ProjetoAdminGuard } from './guards/projeto-admin.guard';
 import { ProjetoMemberGuard } from './guards/projeto-member.guard';
 import { ProjetoService } from './projeto.service';
+import { AttachmentService } from './attachment.service';
 import { CreateColunaDto } from './dto/create-coluna.dto';
 import { UpdateColunaDto } from './dto/update-coluna.dto';
 import { ReorderColunasDto } from './dto/reorder-colunas.dto';
@@ -35,7 +42,10 @@ import { UpdateCommentDto } from './dto/update-comment.dto';
 @UseGuards(ProjetoMemberGuard)
 @Controller('projetos/:projectId')
 export class ProjetoController {
-  constructor(private readonly projetoService: ProjetoService) {}
+  constructor(
+    private readonly projetoService: ProjetoService,
+    private readonly attachmentService: AttachmentService,
+  ) {}
 
   // ── Kanban ────────────────────────────────────────────────────────────────────
 
@@ -151,6 +161,27 @@ export class ProjetoController {
     return this.projetoService.moveTask(projectId, taskId, dto, user.id);
   }
 
+  @Get('tasks/deleted')
+  @UseGuards(ProjetoAdminGuard)
+  @ApiOperation({ summary: 'Lista tasks deletadas do projeto (lixeira)' })
+  @ApiResponse({ status: 200, description: 'Tasks deletadas retornadas' })
+  getDeletedTasks(@Param('projectId') projectId: string) {
+    return this.projetoService.getDeletedTasks(projectId);
+  }
+
+  @Patch('tasks/:taskId/restore')
+  @UseGuards(ProjetoAdminGuard)
+  @ApiOperation({ summary: 'Restaura task da lixeira' })
+  @ApiResponse({ status: 200, description: 'Task restaurada' })
+  @ApiResponse({ status: 404, description: 'Task não encontrada na lixeira' })
+  restoreTask(
+    @Param('projectId') projectId: string,
+    @Param('taskId') taskId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.projetoService.restoreTask(projectId, taskId, user.id);
+  }
+
   @Delete('tasks/:taskId')
   @UseGuards(ProjetoAdminGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -169,10 +200,7 @@ export class ProjetoController {
   @ApiOperation({ summary: 'Histórico de alterações da task' })
   @ApiResponse({ status: 200, description: 'Histórico retornado com sucesso' })
   @ApiResponse({ status: 404, description: 'Task não encontrada' })
-  getTaskHistory(
-    @Param('projectId') projectId: string,
-    @Param('taskId') taskId: string,
-  ) {
+  getTaskHistory(@Param('projectId') projectId: string, @Param('taskId') taskId: string) {
     return this.projetoService.getTaskHistory(projectId, taskId);
   }
 
@@ -185,7 +213,6 @@ export class ProjetoController {
     @Param('taskId') taskId: string,
     @Body() dto: AssignTaskDto,
     @CurrentUser() user: AuthUser,
-    @Request() req: { projectMemberRole?: string },
   ) {
     return this.projetoService.assignTask(projectId, taskId, dto, user.id);
   }
@@ -247,10 +274,7 @@ export class ProjetoController {
   @ApiOperation({ summary: 'Listar comentários da task' })
   @ApiResponse({ status: 200, description: 'Comentários retornados' })
   @ApiResponse({ status: 404, description: 'Task não encontrada' })
-  listComments(
-    @Param('projectId') projectId: string,
-    @Param('taskId') taskId: string,
-  ) {
+  listComments(@Param('projectId') projectId: string, @Param('taskId') taskId: string) {
     return this.projetoService.listComments(projectId, taskId);
   }
 
@@ -302,5 +326,79 @@ export class ProjetoController {
     const isAdmin =
       req.projectMemberRole === 'workspace_admin' || req.projectMemberRole === 'project_admin';
     await this.projetoService.deleteComment(projectId, taskId, commentId, user.id, isAdmin);
+  }
+
+  // ── Anexos ────────────────────────────────────────────────────────────────────
+
+  @Get('tasks/:taskId/attachments')
+  @ApiOperation({ summary: 'Listar anexos da task' })
+  @ApiResponse({ status: 200, description: 'Anexos retornados' })
+  listAttachments(@Param('taskId') taskId: string) {
+    return this.attachmentService.listAttachments(taskId);
+  }
+
+  @Post('tasks/:taskId/attachments')
+  @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(
+    FileInterceptor('file', { storage: undefined, limits: { fileSize: 64 * 1024 * 1024 } }),
+  )
+  @ApiOperation({ summary: 'Upload de anexo (imagem ou vídeo)' })
+  @ApiResponse({ status: 201, description: 'Anexo salvo' })
+  uploadAttachment(
+    @Param('taskId') taskId: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.attachmentService.upload(taskId, file, user.id);
+  }
+
+  @Get('tasks/:taskId/attachments/:attachmentId/thumbnail')
+  @ApiOperation({ summary: 'Serve thumbnail do anexo (baixa resolução)' })
+  async serveAttachmentThumbnail(
+    @Param('taskId') taskId: string,
+    @Param('attachmentId') attachmentId: string,
+    @Res() res: Response,
+  ) {
+    const att = await this.attachmentService['repo'].findAttachmentById(attachmentId, taskId);
+    if (!att) {
+      res.status(404).json({ message: 'Anexo não encontrado' });
+      return;
+    }
+    const isVideo = att.mimeType.startsWith('video/');
+    const filePath = this.attachmentService.serveThumbnail(taskId, att.storedName, isVideo);
+    const contentType = isVideo ? 'image/jpeg' : 'image/webp';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    createReadStream(filePath).pipe(res);
+  }
+
+  @Get('tasks/:taskId/attachments/:attachmentId/file')
+  @ApiOperation({ summary: 'Serve arquivo completo do anexo' })
+  async serveAttachmentFile(
+    @Param('taskId') taskId: string,
+    @Param('attachmentId') attachmentId: string,
+    @Res() res: Response,
+  ) {
+    const att = await this.attachmentService['repo'].findAttachmentById(attachmentId, taskId);
+    if (!att) {
+      res.status(404).json({ message: 'Anexo não encontrado' });
+      return;
+    }
+    const filePath = this.attachmentService.serveFile(taskId, att.storedName);
+    res.setHeader('Content-Type', att.mimeType.startsWith('video/') ? att.mimeType : 'image/webp');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    createReadStream(filePath).pipe(res);
+  }
+
+  @Delete('tasks/:taskId/attachments/:attachmentId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Remover anexo da task' })
+  @ApiResponse({ status: 204, description: 'Anexo removido' })
+  async deleteAttachment(
+    @Param('taskId') taskId: string,
+    @Param('attachmentId') attachmentId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    await this.attachmentService.deleteAttachment(attachmentId, taskId, user.id);
   }
 }

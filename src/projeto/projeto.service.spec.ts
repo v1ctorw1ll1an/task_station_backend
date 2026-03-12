@@ -36,9 +36,10 @@ function makeTask(overrides: Record<string, unknown> = {}) {
     startDate: null,
     columnId: 'col-1',
     projectId: 'project-1',
+    updatedAt: new Date(),
     taskAssignees: [],
     taskLabels: [],
-    reporter: { id: 'user-1', name: 'User' },
+    reporter: { id: 'user-1', name: 'User', email: 'user@test.com', photoUrl: null },
     ...overrides,
   };
 }

@@ -41,4 +41,33 @@ export class MeRepository {
       orderBy: { name: 'asc' },
     });
   }
+
+  findUserById(userId: string) {
+    return this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true, email: true, phone: true, photoUrl: true, createdAt: true },
+    });
+  }
+
+  updateUserById(userId: string, data: { name?: string; phone?: string; photoUrl?: string }) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data,
+      select: { id: true, name: true, email: true, phone: true, photoUrl: true, updatedAt: true },
+    });
+  }
+
+  findUserPasswordHash(userId: string) {
+    return this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { passwordHash: true },
+    });
+  }
+
+  updateUserPasswordHash(userId: string, passwordHash: string) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash },
+    });
+  }
 }

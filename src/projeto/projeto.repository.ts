@@ -13,8 +13,10 @@ const TASK_SELECT = {
   updatedAt: true,
   columnId: true,
   projectId: true,
-  taskAssignees: { select: { user: { select: { id: true, name: true } } } },
-  reporter: { select: { id: true, name: true } },
+  taskAssignees: {
+    select: { user: { select: { id: true, name: true, email: true, photoUrl: true } } },
+  },
+  reporter: { select: { id: true, name: true, email: true, photoUrl: true } },
   taskLabels: {
     where: { label: { deletedAt: null } },
     select: { label: { select: { id: true, name: true, color: true } } },
@@ -233,6 +235,33 @@ export class ProjetoRepository {
     return this.prisma.task.update({
       where: { id: taskId },
       data: { deletedAt: new Date() },
+    });
+  }
+
+  findDeletedTaskById(taskId: string, projectId: string) {
+    return this.prisma.task.findFirst({
+      where: { id: taskId, projectId, deletedAt: { not: null } },
+      select: { id: true },
+    });
+  }
+
+  findDeletedTasks(projectId: string) {
+    return this.prisma.task.findMany({
+      where: { projectId, deletedAt: { not: null } },
+      select: {
+        ...TASK_SELECT,
+        deletedAt: true,
+        column: { select: { id: true, name: true } },
+      },
+      orderBy: { deletedAt: 'desc' },
+    });
+  }
+
+  restoreTask(taskId: string) {
+    return this.prisma.task.update({
+      where: { id: taskId },
+      data: { deletedAt: null },
+      select: TASK_SELECT,
     });
   }
 
@@ -488,6 +517,77 @@ export class ProjetoRepository {
         changedAt: true,
         user: { select: { id: true, name: true } },
       },
+    });
+  }
+
+  // ── Attachments ────────────────────────────────────────────────────────────
+
+  createAttachment(data: {
+    taskId: string;
+    uploadedById: string;
+    originalName: string;
+    storedName: string;
+    mimeType: string;
+    size: number;
+    hasThumbnail: boolean;
+  }) {
+    return this.prisma.taskAttachment.create({
+      data,
+      select: {
+        id: true,
+        taskId: true,
+        originalName: true,
+        storedName: true,
+        mimeType: true,
+        size: true,
+        hasThumbnail: true,
+        createdAt: true,
+        uploadedBy: { select: { id: true, name: true } },
+      },
+    });
+  }
+
+  findAttachments(taskId: string) {
+    return this.prisma.taskAttachment.findMany({
+      where: { taskId, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        taskId: true,
+        originalName: true,
+        storedName: true,
+        mimeType: true,
+        size: true,
+        hasThumbnail: true,
+        createdAt: true,
+        uploadedBy: { select: { id: true, name: true } },
+      },
+    });
+  }
+
+  findAttachmentById(id: string, taskId: string) {
+    return this.prisma.taskAttachment.findFirst({
+      where: { id, taskId, deletedAt: null },
+      select: {
+        id: true,
+        originalName: true,
+        storedName: true,
+        mimeType: true,
+        hasThumbnail: true,
+      },
+    });
+  }
+
+  softDeleteAttachment(id: string) {
+    return this.prisma.taskAttachment.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
+  }
+
+  countAttachments(taskId: string, mimePrefix: 'image/' | 'video/') {
+    return this.prisma.taskAttachment.count({
+      where: { taskId, deletedAt: null, mimeType: { startsWith: mimePrefix } },
     });
   }
 }

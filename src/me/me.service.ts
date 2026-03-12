@@ -1,6 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
+import * as bcrypt from 'bcryptjs';
 import { MeRepository } from './me.repository';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+import { UpdatePasswordDto } from './dto/update-password.dto';
 
 @Injectable()
 export class MeService {
@@ -30,6 +33,31 @@ export class MeService {
       companyId: ws.companyId,
       role: roleMap.get(ws.id) ?? 'member',
     }));
+  }
+
+  async getProfile(userId: string) {
+    const user = await this.repo.findUserById(userId);
+    if (!user) throw new NotFoundException('Usuário não encontrado');
+    this.logger.info({ userId }, 'Profile fetched');
+    return user;
+  }
+
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    const updated = await this.repo.updateUserById(userId, dto);
+    this.logger.info({ userId }, 'Profile updated');
+    return updated;
+  }
+
+  async updatePassword(userId: string, dto: UpdatePasswordDto) {
+    const record = await this.repo.findUserPasswordHash(userId);
+    if (!record) throw new NotFoundException('Usuário não encontrado');
+
+    const valid = await bcrypt.compare(dto.currentPassword, record.passwordHash);
+    if (!valid) throw new UnauthorizedException('Senha atual incorreta');
+
+    const hash = await bcrypt.hash(dto.newPassword, 10);
+    await this.repo.updateUserPasswordHash(userId, hash);
+    this.logger.info({ userId }, 'Password changed');
   }
 
   async getMyCompanies(userId: string) {
