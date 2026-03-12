@@ -86,6 +86,7 @@ function makeRepo(
     createWorkspaceWithMembers: jest.fn(),
     createWorkspaceWithNewAdmin: jest.fn(),
     createWorkspaceWithExistingAdmin: jest.fn(),
+    findProjectsByWorkspace: jest.fn().mockResolvedValue([]),
     ...overrides,
   } as unknown as jest.Mocked<EmpresaRepository>;
 }
