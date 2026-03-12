@@ -5,8 +5,6 @@ import { ProjetoService } from './projeto.service';
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
-const NOW = new Date('2026-01-01T00:00:00Z');
-
 function makeProject(overrides: Record<string, unknown> = {}) {
   return {
     id: 'project-1',
@@ -67,6 +65,7 @@ function makeRepo(
     softDeleteTask: jest.fn(),
     moveTask: jest.fn(),
     getKanban: jest.fn(),
+    createTaskHistories: jest.fn().mockResolvedValue({ count: 1 }),
     ...overrides,
   } as unknown as jest.Mocked<ProjetoRepository>;
 }
@@ -148,7 +147,12 @@ describe('ProjetoService', () => {
       repo.updateColuna.mockResolvedValue(updated);
       const service = makeService(repo);
 
-      const result = await service.updateColuna('project-1', 'col-1', { name: 'Em Review' }, 'user-1');
+      const result = await service.updateColuna(
+        'project-1',
+        'col-1',
+        { name: 'Em Review' },
+        'user-1',
+      );
 
       expect(result.name).toBe('Em Review');
     });
@@ -158,9 +162,9 @@ describe('ProjetoService', () => {
       repo.findColumnById.mockResolvedValue(null);
       const service = makeService(repo);
 
-      await expect(service.updateColuna('project-1', 'invalid', { name: 'X' }, 'user-1')).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.updateColuna('project-1', 'invalid', { name: 'X' }, 'user-1'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -174,7 +178,11 @@ describe('ProjetoService', () => {
 
       await service.deleteColuna('project-1', 'col-1', {}, 'user-1');
 
-      expect(repo.softDeleteColunaWithMigration).toHaveBeenCalledWith('col-1', 'project-1', undefined);
+      expect(repo.softDeleteColunaWithMigration).toHaveBeenCalledWith(
+        'col-1',
+        'project-1',
+        undefined,
+      );
     });
 
     it('lança BadRequestException se coluna tem tasks e sem targetColumnId', async () => {
@@ -183,9 +191,9 @@ describe('ProjetoService', () => {
       repo.countActiveTasksInColumn.mockResolvedValue(3);
       const service = makeService(repo);
 
-      await expect(
-        service.deleteColuna('project-1', 'col-1', {}, 'user-1'),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.deleteColuna('project-1', 'col-1', {}, 'user-1')).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('migra tasks para targetColumnId antes de deletar', async () => {
@@ -199,7 +207,11 @@ describe('ProjetoService', () => {
 
       await service.deleteColuna('project-1', 'col-1', { targetColumnId: 'col-2' }, 'user-1');
 
-      expect(repo.softDeleteColunaWithMigration).toHaveBeenCalledWith('col-1', 'project-1', 'col-2');
+      expect(repo.softDeleteColunaWithMigration).toHaveBeenCalledWith(
+        'col-1',
+        'project-1',
+        'col-2',
+      );
     });
 
     it('lança BadRequestException se targetColumnId == columnId', async () => {
@@ -272,7 +284,12 @@ describe('ProjetoService', () => {
       repo.updateTaskAssignees.mockResolvedValue([{ count: 0 }] as never);
       const service = makeService(repo);
 
-      const result = await service.updateTask('project-1', 'task-1', { title: 'Atualizada' }, 'user-1');
+      const result = await service.updateTask(
+        'project-1',
+        'task-1',
+        { title: 'Atualizada' },
+        'user-1',
+      );
 
       expect(result?.title).toBe('Atualizada');
     });
@@ -298,7 +315,7 @@ describe('ProjetoService', () => {
       repo.moveTask.mockResolvedValue(undefined);
       const service = makeService(repo);
 
-      const result = await service.moveTask('project-1', 'task-1', { columnId: 'col-2' }, 'user-1');
+      await service.moveTask('project-1', 'task-1', { columnId: 'col-2' }, 'user-1');
 
       expect(repo.moveTask).toHaveBeenCalledWith('task-1', 'col-2', undefined);
     });
@@ -351,7 +368,9 @@ describe('ProjetoService', () => {
   describe('assignTask', () => {
     it('atribui assignee com sucesso', async () => {
       const repo = makeRepo();
-      const taskWithAssignee = makeTask({ taskAssignees: [{ user: { id: 'user-2', name: 'Ana' } }] });
+      const taskWithAssignee = makeTask({
+        taskAssignees: [{ user: { id: 'user-2', name: 'Ana' } }],
+      });
       repo.findTaskById.mockResolvedValueOnce(makeTask()).mockResolvedValueOnce(taskWithAssignee);
       repo.updateTaskAssignees.mockResolvedValue([{ count: 0 }] as never);
       const service = makeService(repo);
@@ -415,9 +434,9 @@ describe('ProjetoService', () => {
       repo.findProjectById.mockResolvedValue(null);
       const service = makeService(repo);
 
-      await expect(
-        service.reorderColunas('invalid', { columnIds: [] }, 'user-1'),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.reorderColunas('invalid', { columnIds: [] }, 'user-1')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 });

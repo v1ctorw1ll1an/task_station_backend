@@ -11,8 +11,8 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN pnpm run build
 RUN pnpx prisma generate
+RUN pnpm run build
 
 # Stage 3: production runner
 FROM node:22-alpine AS runner
@@ -25,6 +25,7 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/src/generated ./src/generated
 
 EXPOSE 3000
 
