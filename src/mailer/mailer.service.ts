@@ -15,7 +15,10 @@ export class MailerService {
   ) {
     const apiKey = this.configService.getOrThrow<string>('RESEND_API_KEY');
     this.resend = new Resend(apiKey);
-    this.from = this.configService.getOrThrow<string>('MAILER_FROM');
+    this.from = this.configService.get<string>(
+      'MAILER_FROM',
+      'Task Station <onboarding@resend.dev>',
+    );
   }
 
   async sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
