@@ -9,6 +9,11 @@ import { WorkspaceMemberGuard } from './guards/workspace-member.guard';
 @Module({
   imports: [PrismaModule],
   controllers: [WorkspaceController],
-  providers: [WorkspaceRepository, WorkspaceService, WorkspaceMemberGuard, WorkspaceCompanyAdminGuard],
+  providers: [
+    WorkspaceRepository,
+    WorkspaceService,
+    WorkspaceMemberGuard,
+    WorkspaceCompanyAdminGuard,
+  ],
 })
 export class WorkspaceModule {}

@@ -1,9 +1,29 @@
-import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+  UnsupportedMediaTypeException,
+} from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import * as bcrypt from 'bcryptjs';
+import { existsSync, mkdirSync } from 'fs';
+import { join } from 'path';
+import sharp from 'sharp';
 import { MeRepository } from './me.repository';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdatePasswordDto } from './dto/update-password.dto';
+
+const AVATARS_ROOT = join(process.cwd(), 'uploads', 'avatars');
+const ALLOWED_MIME = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/avif',
+  'image/heic',
+  'image/heif',
+]);
 
 @Injectable()
 export class MeService {
@@ -58,6 +78,30 @@ export class MeService {
     const hash = await bcrypt.hash(dto.newPassword, 10);
     await this.repo.updateUserPasswordHash(userId, hash);
     this.logger.info({ userId }, 'Password changed');
+  }
+
+  async uploadAvatar(userId: string, file: Express.Multer.File): Promise<{ photoUrl: string }> {
+    if (!file) throw new BadRequestException('Nenhum arquivo enviado');
+    if (!ALLOWED_MIME.has(file.mimetype))
+      throw new UnsupportedMediaTypeException('Formato não suportado');
+    if (file.size > 16 * 1024 * 1024)
+      throw new BadRequestException('Arquivo muito grande (máx 16 MB)');
+
+    if (!existsSync(AVATARS_ROOT)) mkdirSync(AVATARS_ROOT, { recursive: true });
+
+    const dest = join(AVATARS_ROOT, `${userId}.webp`);
+    await sharp(file.buffer).resize(400, 400, { fit: 'cover' }).webp({ quality: 85 }).toFile(dest);
+
+    const photoUrl = `/api/v1/me/foto/${userId}?t=${Date.now()}`;
+    await this.repo.updateUserById(userId, { photoUrl });
+
+    this.logger.info({ userId }, 'Avatar uploaded');
+    return { photoUrl };
+  }
+
+  getAvatarPath(userId: string): string | null {
+    const p = join(AVATARS_ROOT, `${userId}.webp`);
+    return existsSync(p) ? p : null;
   }
 
   async getMyCompanies(userId: string) {

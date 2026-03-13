@@ -34,7 +34,7 @@ import { SuperadminModule } from './superadmin/superadmin.module';
             genReqId: () => crypto.randomUUID(),
             // Omite campos sensíveis dos logs
             serializers: {
-              req(req) {
+              req(req: { id: string; method: string; url: string; remoteAddress: string }) {
                 return {
                   id: req.id,
                   method: req.method,
@@ -42,7 +42,7 @@ import { SuperadminModule } from './superadmin/superadmin.module';
                   remoteAddress: req.remoteAddress,
                 };
               },
-              res(res) {
+              res(res: { statusCode: number }) {
                 return {
                   statusCode: res.statusCode,
                 };

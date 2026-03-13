@@ -199,7 +199,10 @@ export class EmpresaController {
   }
 
   @Patch('workspaces/:workspaceId/membros/:userId/role')
-  @ApiOperation({ summary: 'Definir papel do membro no workspace (dropdown: workspace_admin | project_admin | member | null=sem acesso)' })
+  @ApiOperation({
+    summary:
+      'Definir papel do membro no workspace (dropdown: workspace_admin | project_admin | member | null=sem acesso)',
+  })
   @ApiResponse({ status: 200, description: 'Papel atualizado' })
   setWorkspaceMemberRole(
     @Param('companyId') companyId: string,
@@ -252,13 +255,7 @@ export class EmpresaController {
     @Param('userId') userId: string,
     @CurrentUser() user: AuthUser,
   ) {
-    await this.empresaService.unrestrictProject(
-      companyId,
-      workspaceId,
-      projectId,
-      userId,
-      user.id,
-    );
+    await this.empresaService.unrestrictProject(companyId, workspaceId, projectId, userId, user.id);
   }
 
   @Post('workspaces/:workspaceId/projetos/:projectId/admins')

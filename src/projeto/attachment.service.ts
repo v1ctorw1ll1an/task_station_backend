@@ -232,6 +232,10 @@ export class AttachmentService {
     return attachment;
   }
 
+  async findAttachmentById(attachmentId: string, taskId: string) {
+    return this.repo.findAttachmentById(attachmentId, taskId);
+  }
+
   async listAttachments(taskId: string) {
     return this.repo.findAttachments(taskId);
   }

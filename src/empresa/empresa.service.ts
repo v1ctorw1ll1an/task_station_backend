@@ -466,8 +466,10 @@ export class EmpresaService {
         : Promise.resolve([]),
     ]);
 
-    const projectAdminSet = new Set(projectMemberships.map((m) => m.resourceId));
-    const restrictedProjectSet = new Set(projectRestrictions.map((r) => r.projectId));
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    const projectAdminSet = new Set(projectMemberships.map((m) => m.resourceId as string));
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    const restrictedProjectSet = new Set(projectRestrictions.map((r) => r.projectId as string));
 
     const workspaceRoles = workspaces.map((ws, i) => {
       const m = workspaceMembershipsMap.get(ws.id);
@@ -529,18 +531,29 @@ export class EmpresaService {
       const projectIds = projects.map((p) => p.id);
       if (projectIds.length > 0) {
         await this.repo.updateManyMemberships(
-          { userId, resourceType: ResourceType.project, resourceId: { in: projectIds }, deletedAt: null },
+          {
+            userId,
+            resourceType: ResourceType.project,
+            resourceId: { in: projectIds },
+            deletedAt: null,
+          },
           { deletedAt: new Date() },
         );
       }
-      this.logger.info({ companyId, workspaceId, userId, performedById }, 'Workspace access removed');
+      this.logger.info(
+        { companyId, workspaceId, userId, performedById },
+        'Workspace access removed',
+      );
       return;
     }
 
     if (existing) {
       if (existing.role === role) return existing;
       const updated = await this.repo.updateMembershipSelect(existing.id, { role });
-      this.logger.info({ companyId, workspaceId, userId, role, performedById }, 'Workspace role updated');
+      this.logger.info(
+        { companyId, workspaceId, userId, role, performedById },
+        'Workspace role updated',
+      );
       return updated;
     }
 
@@ -567,7 +580,10 @@ export class EmpresaService {
       role: role as MembershipRole,
     });
 
-    this.logger.info({ companyId, workspaceId, userId, role, performedById }, 'Workspace membership created');
+    this.logger.info(
+      { companyId, workspaceId, userId, role, performedById },
+      'Workspace membership created',
+    );
     return membership;
   }
 
@@ -597,7 +613,10 @@ export class EmpresaService {
       await this.repo.updateMembership(projectAdminMembership.id, { deletedAt: new Date() });
     }
 
-    this.logger.info({ companyId, workspaceId, projectId, userId, performedById }, 'Project restricted');
+    this.logger.info(
+      { companyId, workspaceId, projectId, userId, performedById },
+      'Project restricted',
+    );
   }
 
   async unrestrictProject(
@@ -611,7 +630,10 @@ export class EmpresaService {
     if (!workspace) throw new NotFoundException('Workspace não encontrado');
 
     await this.repo.deleteProjectRestriction(userId, projectId);
-    this.logger.info({ companyId, workspaceId, projectId, userId, performedById }, 'Project unrestricted');
+    this.logger.info(
+      { companyId, workspaceId, projectId, userId, performedById },
+      'Project unrestricted',
+    );
   }
 
   async setProjectAdmin(
@@ -650,7 +672,10 @@ export class EmpresaService {
       role: MembershipRole.project_admin,
     });
 
-    this.logger.info({ companyId, workspaceId, projectId, userId, performedById }, 'Project admin set');
+    this.logger.info(
+      { companyId, workspaceId, projectId, userId, performedById },
+      'Project admin set',
+    );
     return membership;
   }
 
@@ -674,7 +699,10 @@ export class EmpresaService {
     if (!membership) throw new NotFoundException('Papel de gerente de projeto não encontrado');
 
     await this.repo.updateMembership(membership.id, { deletedAt: new Date() });
-    this.logger.info({ companyId, workspaceId, projectId, userId, performedById }, 'Project admin revoked');
+    this.logger.info(
+      { companyId, workspaceId, projectId, userId, performedById },
+      'Project admin revoked',
+    );
   }
 
   async addWorkspaceMember(
@@ -717,7 +745,10 @@ export class EmpresaService {
       });
     }
 
-    this.logger.info({ companyId, workspaceId, userId, performedById }, 'Member added to workspace');
+    this.logger.info(
+      { companyId, workspaceId, userId, performedById },
+      'Member added to workspace',
+    );
     return membership;
   }
 
@@ -743,9 +774,7 @@ export class EmpresaService {
     if (!membership) throw new NotFoundException('Membro não encontrado neste workspace');
 
     if (membership.role === MembershipRole.workspace_admin) {
-      throw new ForbiddenException(
-        'Revogue o papel de workspace_admin antes de remover o membro',
-      );
+      throw new ForbiddenException('Revogue o papel de workspace_admin antes de remover o membro');
     }
 
     await this.repo.updateMembership(membership.id, { deletedAt: new Date() });

@@ -359,7 +359,7 @@ export class ProjetoController {
     @Param('attachmentId') attachmentId: string,
     @Res() res: Response,
   ) {
-    const att = await this.attachmentService['repo'].findAttachmentById(attachmentId, taskId);
+    const att = await this.attachmentService.findAttachmentById(attachmentId, taskId);
     if (!att) {
       res.status(404).json({ message: 'Anexo não encontrado' });
       return;
@@ -379,7 +379,7 @@ export class ProjetoController {
     @Param('attachmentId') attachmentId: string,
     @Res() res: Response,
   ) {
-    const att = await this.attachmentService['repo'].findAttachmentById(attachmentId, taskId);
+    const att = await this.attachmentService.findAttachmentById(attachmentId, taskId);
     if (!att) {
       res.status(404).json({ message: 'Anexo não encontrado' });
       return;

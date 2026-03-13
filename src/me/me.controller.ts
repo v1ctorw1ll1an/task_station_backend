@@ -1,5 +1,21 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Patch } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+  Res,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Response } from 'express';
+import { createReadStream } from 'fs';
+import { Public } from '../auth/decorators/public.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthUser } from '../auth/strategies/jwt.strategy';
 import { MeService } from './me.service';
@@ -24,6 +40,30 @@ export class MeController {
   @ApiResponse({ status: 200, description: 'Perfil atualizado' })
   updateProfile(@CurrentUser() user: AuthUser, @Body() dto: UpdateProfileDto) {
     return this.meService.updateProfile(user.id, dto);
+  }
+
+  @Post('perfil/foto')
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileInterceptor('foto', { storage: undefined, limits: { fileSize: 16 * 1024 * 1024 } }),
+  )
+  @ApiOperation({ summary: 'Upload de foto de perfil' })
+  uploadAvatar(@CurrentUser() user: AuthUser, @UploadedFile() file: Express.Multer.File) {
+    return this.meService.uploadAvatar(user.id, file);
+  }
+
+  @Public()
+  @Get('foto/:userId')
+  @ApiOperation({ summary: 'Serve foto de perfil (público)' })
+  serveAvatar(@Param('userId') userId: string, @Res() res: Response) {
+    const filePath = this.meService.getAvatarPath(userId);
+    if (!filePath) {
+      res.status(404).json({ message: 'Avatar não encontrado' });
+      return;
+    }
+    res.setHeader('Content-Type', 'image/webp');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    createReadStream(filePath).pipe(res);
   }
 
   @Patch('perfil/senha')
