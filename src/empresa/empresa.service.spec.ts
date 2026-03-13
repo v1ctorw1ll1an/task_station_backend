@@ -440,24 +440,21 @@ describe('EmpresaService.promoteToAdmin', () => {
     ).rejects.toThrow(ConflictException);
   });
 
-  it('cria membership de admin com sucesso', async () => {
-    const newMembership = makeMembership({ userId: 'user-2', role: MembershipRole.admin });
+  it('atualiza membership existente para admin com sucesso', async () => {
+    const existingMembership = makeMembership({ userId: 'user-2' });
+    const updatedMembership = makeMembership({ userId: 'user-2', role: MembershipRole.admin });
     const repo = makeRepo({
       findMembership: jest
         .fn()
-        .mockResolvedValueOnce(makeMembership({ userId: 'user-2' })) // é membro
+        .mockResolvedValueOnce(existingMembership) // é membro
         .mockResolvedValueOnce(null), // ainda não é admin
-      createMembershipSelect: jest.fn().mockResolvedValue(newMembership),
+      updateMembershipSelect: jest.fn().mockResolvedValue(updatedMembership),
     });
     const { service } = makeService(repo);
     const result = await service.promoteToAdmin('company-1', { userId: 'user-2' }, 'user-1');
-    expect(repo.createMembershipSelect).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: 'user-2',
-        resourceType: ResourceType.company,
-        role: MembershipRole.admin,
-      }),
-    );
+    expect(repo.updateMembershipSelect).toHaveBeenCalledWith(existingMembership.id, {
+      role: MembershipRole.admin,
+    });
     expect(result.role).toBe(MembershipRole.admin);
   });
 });
