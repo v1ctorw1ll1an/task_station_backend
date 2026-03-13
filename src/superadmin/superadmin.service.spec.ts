@@ -183,9 +183,7 @@ describe('SuperadminService.createCompany', () => {
     );
     expect(authService.generateFirstAccessToken).toHaveBeenCalledWith('admin-new');
     expect(result.emailSent).toBe(true);
-    expect(result.magicLink).toContain('/first-access?token=raw-token-abc');
-    // email é disparado de forma assíncrona (fire-and-forget), então só verificamos que foi chamado
-    await new Promise((r) => setTimeout(r, 10));
+    expect(result.magicLink).toBeNull();
     expect(mailerService.sendFirstAccessEmail).toHaveBeenCalled();
   });
 

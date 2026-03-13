@@ -66,20 +66,22 @@ export class SuperadminService {
     }
 
     let magicLink: string | null = null;
+    let emailSent = false;
 
     if (isNewUser) {
       const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
       const rawToken = await this.authService.generateFirstAccessToken(admin.id);
       magicLink = `${frontendUrl}/first-access?token=${rawToken}`;
 
-      this.mailerService
-        .sendFirstAccessEmail(dto.adminEmail, admin.name, magicLink)
-        .catch((err: unknown) => {
-          this.logger.error(
-            { adminEmail: dto.adminEmail, err },
-            'Failed to send first access email — company was created successfully',
-          );
-        });
+      try {
+        await this.mailerService.sendFirstAccessEmail(dto.adminEmail, admin.name, magicLink);
+        emailSent = true;
+      } catch (err: unknown) {
+        this.logger.error(
+          { adminEmail: dto.adminEmail, err },
+          'Failed to send first access email — company was created successfully',
+        );
+      }
     }
 
     this.logger.info(
@@ -89,11 +91,12 @@ export class SuperadminService {
         adminEmail: dto.adminEmail,
         createdById,
         isNewUser,
+        emailSent,
       },
       'Company created with admin',
     );
 
-    return { company, admin, emailSent: isNewUser, magicLink };
+    return { company, admin, emailSent, magicLink: emailSent ? null : magicLink };
   }
 
   async listCompanies(query: ListCompaniesQueryDto) {

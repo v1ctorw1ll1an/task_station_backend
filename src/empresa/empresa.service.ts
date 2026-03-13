@@ -146,14 +146,19 @@ export class EmpresaService {
     const rawToken = await this.authService.generateFirstAccessToken(user.id);
     const magicLink = `${frontendUrl}/first-access?token=${rawToken}`;
 
-    this.mailerService
-      .sendFirstAccessEmail(dto.email, dto.name, magicLink)
-      .catch((err: unknown) => {
-        this.logger.error({ email: dto.email, err }, 'Failed to send first access email');
-      });
+    let emailSent = false;
+    try {
+      await this.mailerService.sendFirstAccessEmail(dto.email, dto.name, magicLink);
+      emailSent = true;
+    } catch (err: unknown) {
+      this.logger.error({ email: dto.email, err }, 'Failed to send first access email');
+    }
 
-    this.logger.info({ companyId, userId: user.id, performedById }, 'Member hired to company');
-    return user;
+    this.logger.info(
+      { companyId, userId: user.id, performedById, emailSent },
+      'Member hired to company',
+    );
+    return { user, emailSent, magicLink: emailSent ? null : magicLink };
   }
 
   async listMembers(companyId: string, query: ListMembersQueryDto) {
