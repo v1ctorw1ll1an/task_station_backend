@@ -17,7 +17,7 @@ export class MailerService {
     this.resend = new Resend(apiKey);
     this.from = this.configService.get<string>(
       'MAILER_FROM',
-      'Task Station <onboarding@resend.dev>',
+      'Task Station <noreply@contato.taskstation.manyflux.com.br>',
     );
   }
 
