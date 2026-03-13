@@ -144,9 +144,13 @@ export class MeService {
 
     return companies
       .map((c) => {
-        const direct = companyMemberships.find((m) => m.resourceId === c.id);
+        const directAll = companyMemberships.filter((m) => m.resourceId === c.id);
+        const bestDirect = directAll.reduce<string | null>(
+          (best, m) => ((roleRank[m.role] ?? 0) > (roleRank[best ?? ''] ?? 0) ? m.role : best),
+          null,
+        );
         // Prioridade: membership direto na empresa > role via workspace
-        const role = direct ? direct.role : (workspaceRoleByCompany.get(c.id) ?? 'member');
+        const role = bestDirect ?? workspaceRoleByCompany.get(c.id) ?? 'member';
         return { companyId: c.id, legalName: c.legalName, role };
       })
       .sort(

@@ -371,10 +371,7 @@ export class EmpresaService {
       throw new ConflictException('Usuário já é administrador desta empresa');
     }
 
-    const membership = await this.repo.createMembershipSelect({
-      userId,
-      resourceType: ResourceType.company,
-      resourceId: companyId,
+    const membership = await this.repo.updateMembershipSelect(companyMembership.id, {
       role: MembershipRole.admin,
     });
 
