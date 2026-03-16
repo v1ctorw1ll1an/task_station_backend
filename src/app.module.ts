@@ -13,6 +13,7 @@ import { MeModule } from './me/me.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProjetoModule } from './projeto/projeto.module';
 import { SuperadminModule } from './superadmin/superadmin.module';
+import { NotificacaoModule } from './notificacao/notificacao.module';
 
 @Module({
   imports: [
@@ -73,6 +74,7 @@ import { SuperadminModule } from './superadmin/superadmin.module';
     WorkspaceModule,
     MeModule,
     ProjetoModule,
+    NotificacaoModule,
   ],
   providers: [
     {

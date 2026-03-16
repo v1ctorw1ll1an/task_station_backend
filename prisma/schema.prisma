@@ -42,6 +42,16 @@ enum TokenType {
   @@map("token_type")
 }
 
+enum NotificationType {
+  ADMIN_BROADCAST
+  MENTION
+  TASK_ASSIGNED
+  TASK_COMMENT
+  TASK_UPDATED
+
+  @@map("notification_type")
+}
+
 model User {
   id                 String    @id @default(uuid())
   email              String    @unique
@@ -68,6 +78,9 @@ model User {
   taskHistories           TaskHistory[]
   taskComments            TaskComment[]
   taskAttachments         TaskAttachment[]
+  notifications           Notification[]   @relation("UserNotifications")
+  triggeredNotifs         Notification[]   @relation("NotificationActors")
+  notifPreference         NotificationPreference?
 
   @@index([deletedAt])
   @@map("users")
@@ -125,6 +138,7 @@ model Project {
   tasks                Task[]
   labels               Label[]
   projectRestrictions  ProjectRestriction[]
+  notifications        Notification[]
 
   @@index([workspaceId])
   @@map("projects")
@@ -172,6 +186,7 @@ model Task {
   taskHistory      TaskHistory[]
   taskComments     TaskComment[]
   taskAttachments  TaskAttachment[]
+  notifications    Notification[]
 
   @@index([columnId, order])
   @@index([projectId, deletedAt])
@@ -316,4 +331,44 @@ model TaskAttachment {
 
   @@index([taskId, deletedAt])
   @@map("task_attachments")
+}
+
+model Notification {
+  id          String           @id @default(uuid())
+  recipientId String           @map("recipient_id")
+  type        NotificationType
+  title       String
+  body        String
+  isRead      Boolean          @default(false) @map("is_read")
+  readAt      DateTime?        @map("read_at")
+  taskId      String?          @map("task_id")
+  projectId   String?          @map("project_id")
+  actorId     String?          @map("actor_id")
+  metadata    Json?
+  createdAt   DateTime         @default(now()) @map("created_at")
+  deletedAt   DateTime?        @map("deleted_at")
+
+  recipient User     @relation("UserNotifications", fields: [recipientId], references: [id])
+  actor     User?    @relation("NotificationActors", fields: [actorId], references: [id])
+  task      Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([recipientId, isRead, createdAt])
+  @@index([recipientId, createdAt])
+  @@map("notifications")
+}
+
+model NotificationPreference {
+  id             String   @id @default(uuid())
+  userId         String   @unique @map("user_id")
+  adminBroadcast Boolean  @default(true) @map("admin_broadcast")
+  mention        Boolean  @default(true)
+  taskAssigned   Boolean  @default(true) @map("task_assigned")
+  taskComment    Boolean  @default(true) @map("task_comment")
+  taskUpdated    Boolean  @default(true) @map("task_updated")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification_preferences")
 }

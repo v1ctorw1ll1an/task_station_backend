@@ -9,6 +9,8 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Prisma } from '../generated/prisma/client';
 import { ProjetoRepository } from './projeto.repository';
 import { KanbanGateway } from './kanban.gateway';
+import { NotificacaoService } from '../notificacao/notificacao.service';
+import { NotificationType } from '../generated/prisma/client';
 import { CreateColunaDto } from './dto/create-coluna.dto';
 import { UpdateColunaDto } from './dto/update-coluna.dto';
 import { ReorderColunasDto } from './dto/reorder-colunas.dto';
@@ -27,6 +29,7 @@ export class ProjetoService {
   constructor(
     private readonly repo: ProjetoRepository,
     private readonly kanbanGateway: KanbanGateway,
+    private readonly notificacaoService: NotificacaoService,
     @InjectPinoLogger(ProjetoService.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -194,6 +197,26 @@ export class ProjetoService {
       task,
       columnId: dto.columnId,
     });
+
+    // Notify new assignees (non-blocking)
+    for (const assigneeId of (task.taskAssignees ?? []).map((a) => a.user.id)) {
+      if (assigneeId !== userId) {
+        this.notificacaoService
+          .notify({
+            type: NotificationType.TASK_ASSIGNED,
+            recipientId: assigneeId,
+            actorId: userId,
+            taskId: task.id,
+            projectId,
+            title: 'Você foi atribuído a uma task',
+            body: task.title ?? 'Nova task',
+          })
+          .catch(() => {
+            /* non-blocking */
+          });
+      }
+    }
+
     return task;
   }
 
@@ -303,6 +326,58 @@ export class ProjetoService {
       task: finalTask,
       actorId: performedById,
     });
+
+    // Notify new assignees (TASK_ASSIGNED)
+    const oldAssigneeIds = new Set(task.taskAssignees.map((a) => a.user.id));
+    const newAssigneeIds = finalTask!.taskAssignees.map((a) => a.user.id);
+    for (const assigneeId of newAssigneeIds) {
+      if (!oldAssigneeIds.has(assigneeId) && assigneeId !== performedById) {
+        this.notificacaoService
+          .notify({
+            type: NotificationType.TASK_ASSIGNED,
+            recipientId: assigneeId,
+            actorId: performedById,
+            taskId,
+            projectId,
+            title: 'Você foi atribuído a uma task',
+            body: finalTask!.title ?? 'Task atualizada',
+          })
+          .catch(() => {
+            /* non-blocking */
+          });
+      }
+    }
+
+    // Notify TASK_UPDATED for important field changes
+    const importantFieldChanged =
+      task.title !== finalTask!.title ||
+      task.priority !== finalTask!.priority ||
+      (task.dueDate?.toISOString() ?? null) !== (finalTask!.dueDate?.toISOString() ?? null);
+
+    if (importantFieldChanged) {
+      const allParticipants = new Set([
+        ...finalTask!.taskAssignees.map((a) => a.user.id),
+        finalTask!.reporter.id,
+      ]);
+      for (const participantId of allParticipants) {
+        if (participantId !== performedById) {
+          this.notificacaoService
+            .notify({
+              type: NotificationType.TASK_UPDATED,
+              recipientId: participantId,
+              actorId: performedById,
+              taskId,
+              projectId,
+              title: 'Task atualizada',
+              body: finalTask!.title ?? 'Uma task que você participa foi atualizada',
+            })
+            .catch(() => {
+              /* non-blocking */
+            });
+        }
+      }
+    }
+
     return finalTask;
   }
 
@@ -482,6 +557,69 @@ export class ProjetoService {
 
     const comment = await this.repo.createComment(taskId, userId, dto.content);
     this.logger.info({ projectId, taskId, commentId: comment.id, userId }, 'Comment created');
+
+    // Notify asynchronously (non-blocking)
+    void (async () => {
+      try {
+        // Parse @mentions from comment content
+        const mentionMatches = [...dto.content.matchAll(/@(\w+)/g)].map((m) => m[1]);
+        const mentionedUserIds = new Set<string>();
+
+        if (mentionMatches.length > 0) {
+          const members = await this.repo.findWorkspaceMembersByProject(projectId);
+          for (const match of mentionMatches) {
+            const matched = members.find(
+              (m) => m.name.toLowerCase().replace(/\s+/g, '') === match.toLowerCase(),
+            );
+            if (matched && matched.id !== userId) {
+              mentionedUserIds.add(matched.id);
+            }
+          }
+          // Send MENTION notifications
+          for (const recipientId of mentionedUserIds) {
+            await this.notificacaoService
+              .notify({
+                type: NotificationType.MENTION,
+                recipientId,
+                actorId: userId,
+                taskId,
+                projectId,
+                title: 'Você foi mencionado em um comentário',
+                body: dto.content.slice(0, 100),
+              })
+              .catch(() => {
+                /* non-blocking */
+              });
+          }
+        }
+
+        // Send TASK_COMMENT to assignees + reporter (excluding commenter and mentioned)
+        const participants = new Set([
+          ...task.taskAssignees.map((a) => a.user.id),
+          task.reporter.id,
+        ]);
+        for (const participantId of participants) {
+          if (participantId !== userId && !mentionedUserIds.has(participantId)) {
+            await this.notificacaoService
+              .notify({
+                type: NotificationType.TASK_COMMENT,
+                recipientId: participantId,
+                actorId: userId,
+                taskId,
+                projectId,
+                title: 'Novo comentário na task',
+                body: dto.content.slice(0, 100),
+              })
+              .catch(() => {
+                /* non-blocking */
+              });
+          }
+        }
+      } catch {
+        // Notification errors should not affect the main flow
+      }
+    })();
+
     return comment;
   }
 

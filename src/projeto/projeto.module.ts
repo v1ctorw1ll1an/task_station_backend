@@ -10,12 +10,14 @@ import { ProjetoService } from './projeto.service';
 import { AttachmentService } from './attachment.service';
 import { ProjetoMemberGuard } from './guards/projeto-member.guard';
 import { ProjetoAdminGuard } from './guards/projeto-admin.guard';
-import { WsAuthGuard } from './guards/ws-auth.guard';
+import { WsAuthGuard } from '../common/guards/ws-auth.guard';
 import { KanbanGateway } from './kanban.gateway';
+import { NotificacaoModule } from '../notificacao/notificacao.module';
 
 @Module({
   imports: [
     PrismaModule,
+    NotificacaoModule,
     MulterModule.register({ storage: memoryStorage() }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

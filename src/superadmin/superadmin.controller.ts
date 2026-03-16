@@ -22,13 +22,18 @@ import { ListUsersQueryDto } from './dto/list-users-query.dto';
 import { UpdateCompanyDto } from './dto/update-company.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { NotificacaoService } from '../notificacao/notificacao.service';
+import { BroadcastDto } from '../notificacao/dto/broadcast.dto';
 
 @ApiTags('superadmin')
 @ApiBearerAuth()
 @UseGuards(SuperuserGuard)
 @Controller('superadmin')
 export class SuperadminController {
-  constructor(private readonly superadminService: SuperadminService) {}
+  constructor(
+    private readonly superadminService: SuperadminService,
+    private readonly notificacaoService: NotificacaoService,
+  ) {}
 
   // ── Empresas ────────────────────────────────────────────────────────────────
 
@@ -151,5 +156,13 @@ export class SuperadminController {
   @ApiResponse({ status: 404, description: 'Usuário não encontrado' })
   getMagicLink(@Param('id') id: string) {
     return this.superadminService.getMagicLink(id);
+  }
+
+  // ── Broadcast ─────────────────────────────────────────────────────────────────
+
+  @Post('broadcast')
+  @ApiOperation({ summary: 'Enviar notificação para todos ou um usuário' })
+  async broadcast(@CurrentUser() user: AuthUser, @Body() dto: BroadcastDto) {
+    await this.notificacaoService.broadcast(user.id, dto.title, dto.body, dto.targetUserId);
   }
 }

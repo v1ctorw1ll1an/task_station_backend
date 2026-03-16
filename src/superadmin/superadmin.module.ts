@@ -6,9 +6,10 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { SuperadminController } from './superadmin.controller';
 import { SuperadminRepository } from './superadmin.repository';
 import { SuperadminService } from './superadmin.service';
+import { NotificacaoModule } from '../notificacao/notificacao.module';
 
 @Module({
-  imports: [PrismaModule, MailerModule, AuthModule, ConfigModule],
+  imports: [PrismaModule, MailerModule, AuthModule, ConfigModule, NotificacaoModule],
   controllers: [SuperadminController],
   providers: [SuperadminRepository, SuperadminService],
 })
