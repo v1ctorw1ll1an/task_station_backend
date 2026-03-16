@@ -10,6 +10,11 @@ async function bootstrap() {
   // Substitui o logger padrão do NestJS pelo pino em todo o ciclo de vida
   app.useLogger(app.get(Logger));
 
+  app.enableCors({
+    origin: process.env.FRONTEND_URL ?? 'http://localhost:3001',
+    credentials: true,
+  });
+
   app.setGlobalPrefix('api/v1');
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }));
 

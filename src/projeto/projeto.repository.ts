@@ -334,6 +334,28 @@ export class ProjetoRepository {
 
   // ── Kanban ────────────────────────────────────────────────────────────────────
 
+  async getProjectLastModifiedAt(projectId: string): Promise<Date> {
+    const result = await this.prisma.$queryRaw<[{ last_modified: Date }]>`
+      SELECT GREATEST(
+        COALESCE((
+          SELECT MAX(t.updated_at)
+          FROM tasks t
+          JOIN columns c ON c.id = t.column_id
+          WHERE c.project_id = ${projectId}
+            AND t.deleted_at IS NULL
+            AND c.deleted_at IS NULL
+        ), '1970-01-01'::timestamptz),
+        COALESCE((
+          SELECT MAX(updated_at)
+          FROM columns
+          WHERE project_id = ${projectId}
+            AND deleted_at IS NULL
+        ), '1970-01-01'::timestamptz)
+      ) AS last_modified
+    `;
+    return result[0].last_modified;
+  }
+
   async getKanban(projectId: string) {
     const columns = await this.prisma.column.findMany({
       where: { projectId, deletedAt: null },

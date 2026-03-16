@@ -64,6 +64,13 @@ export class ProjetoController {
     return this.projetoService.listMembers(projectId);
   }
 
+  @Get('last-modified')
+  @ApiOperation({ summary: 'Timestamp da última alteração no projeto (polling de sync)' })
+  @ApiResponse({ status: 200, description: 'lastModifiedAt retornado' })
+  getLastModified(@Param('projectId') projectId: string) {
+    return this.projetoService.getProjectLastModifiedAt(projectId);
+  }
+
   // ── Colunas ───────────────────────────────────────────────────────────────────
 
   @Post('colunas')

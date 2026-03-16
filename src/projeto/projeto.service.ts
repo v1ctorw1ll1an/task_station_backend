@@ -8,6 +8,7 @@ import {
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Prisma } from '../generated/prisma/client';
 import { ProjetoRepository } from './projeto.repository';
+import { KanbanGateway } from './kanban.gateway';
 import { CreateColunaDto } from './dto/create-coluna.dto';
 import { UpdateColunaDto } from './dto/update-coluna.dto';
 import { ReorderColunasDto } from './dto/reorder-colunas.dto';
@@ -25,6 +26,7 @@ import { UpdateCommentDto } from './dto/update-comment.dto';
 export class ProjetoService {
   constructor(
     private readonly repo: ProjetoRepository,
+    private readonly kanbanGateway: KanbanGateway,
     @InjectPinoLogger(ProjetoService.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -40,6 +42,15 @@ export class ProjetoService {
     const kanban = await this.repo.getKanban(projectId);
     this.logger.debug({ projectId }, 'Kanban fetched');
     return kanban;
+  }
+
+  async getProjectLastModifiedAt(projectId: string) {
+    const project = await this.repo.findProjectById(projectId);
+    if (!project) {
+      throw new NotFoundException('Projeto não encontrado');
+    }
+    const lastModifiedAt = await this.repo.getProjectLastModifiedAt(projectId);
+    return { lastModifiedAt: lastModifiedAt.toISOString() };
   }
 
   // ── Colunas ───────────────────────────────────────────────────────────────────
@@ -62,6 +73,9 @@ export class ProjetoService {
     });
 
     this.logger.info({ projectId, columnId: coluna.id, performedById }, 'Column created');
+    this.kanbanGateway.emitToProject(projectId, 'column:created', {
+      column: { ...coluna, tasks: [] },
+    });
     return coluna;
   }
 
@@ -78,6 +92,10 @@ export class ProjetoService {
 
     const updated = await this.repo.updateColuna(columnId, dto as Prisma.ColumnUpdateInput);
     this.logger.info({ projectId, columnId, changes: dto, performedById }, 'Column updated');
+    this.kanbanGateway.emitToProject(projectId, 'column:updated', {
+      columnId,
+      changes: dto,
+    });
     return updated;
   }
 
@@ -89,6 +107,9 @@ export class ProjetoService {
 
     await this.repo.reorderColunas(projectId, dto.columnIds);
     this.logger.info({ projectId, columnIds: dto.columnIds, performedById }, 'Columns reordered');
+    this.kanbanGateway.emitToProject(projectId, 'column:reordered', {
+      orderedColumnIds: dto.columnIds,
+    });
 
     return this.repo.findColumnsByProject(projectId);
   }
@@ -123,11 +144,22 @@ export class ProjetoService {
       }
     }
 
+    // Captura IDs das tasks antes da migração para incluir no evento
+    const tasksBeforeDeletion = dto.targetColumnId
+      ? await this.repo.findTasksByColumn(columnId)
+      : [];
+    const movedTaskIds = tasksBeforeDeletion.map((t) => t.id);
+
     await this.repo.softDeleteColunaWithMigration(columnId, projectId, dto.targetColumnId);
     this.logger.info(
       { projectId, columnId, targetColumnId: dto.targetColumnId, performedById },
       'Column soft-deleted',
     );
+    this.kanbanGateway.emitToProject(projectId, 'column:deleted', {
+      columnId,
+      targetColumnId: dto.targetColumnId ?? null,
+      movedTaskIds,
+    });
   }
 
   // ── Tasks ─────────────────────────────────────────────────────────────────────
@@ -158,6 +190,10 @@ export class ProjetoService {
     });
 
     this.logger.info({ projectId, taskId: task.id, createdById: userId }, 'Task created');
+    this.kanbanGateway.emitToProject(projectId, 'task:created', {
+      task,
+      columnId: dto.columnId,
+    });
     return task;
   }
 
@@ -263,6 +299,10 @@ export class ProjetoService {
     );
 
     this.logger.info({ projectId, taskId, changes: dto, performedById }, 'Task updated');
+    this.kanbanGateway.emitToProject(projectId, 'task:updated', {
+      task: finalTask,
+      actorId: performedById,
+    });
     return finalTask;
   }
 
@@ -302,6 +342,13 @@ export class ProjetoService {
       { projectId, taskId, columnId: dto.columnId, afterTaskId: dto.afterTaskId, performedById },
       'Task moved',
     );
+    this.kanbanGateway.emitToProject(projectId, 'task:moved', {
+      taskId,
+      fromColumnId: task.columnId,
+      toColumnId: dto.columnId,
+      afterTaskId: dto.afterTaskId ?? null,
+      actorId: performedById,
+    });
 
     return this.repo.findTaskById(taskId, projectId);
   }
@@ -322,6 +369,11 @@ export class ProjetoService {
 
     await this.repo.softDeleteTask(taskId);
     this.logger.info({ projectId, taskId, performedById }, 'Task soft-deleted');
+    this.kanbanGateway.emitToProject(projectId, 'task:deleted', {
+      taskId,
+      columnId: task.columnId,
+      actorId: performedById,
+    });
   }
 
   async getDeletedTasks(projectId: string) {
@@ -336,6 +388,10 @@ export class ProjetoService {
 
     const restored = await this.repo.restoreTask(taskId);
     this.logger.info({ projectId, taskId, performedById }, 'Task restored');
+    this.kanbanGateway.emitToProject(projectId, 'task:restored', {
+      task: restored,
+      columnId: restored.columnId,
+    });
     return restored;
   }
 
