@@ -201,6 +201,7 @@ export class WorkspaceRepository {
           email: true,
           phone: true,
           isActive: true,
+          photoUrl: true,
           createdAt: true,
         },
       }),

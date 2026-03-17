@@ -413,7 +413,7 @@ export class ProjetoRepository {
 
     return this.prisma.user.findMany({
       where: { id: { in: userIds }, deletedAt: null, isActive: true },
-      select: { id: true, name: true, email: true },
+      select: { id: true, name: true, email: true, photoUrl: true },
       orderBy: { name: 'asc' },
     });
   }
@@ -466,7 +466,7 @@ export class ProjetoRepository {
         content: true,
         createdAt: true,
         updatedAt: true,
-        user: { select: { id: true, name: true } },
+        user: { select: { id: true, name: true, email: true, photoUrl: true } },
       },
     });
   }
@@ -486,7 +486,7 @@ export class ProjetoRepository {
         content: true,
         createdAt: true,
         updatedAt: true,
-        user: { select: { id: true, name: true } },
+        user: { select: { id: true, name: true, email: true, photoUrl: true } },
       },
     });
   }
@@ -500,7 +500,7 @@ export class ProjetoRepository {
         content: true,
         createdAt: true,
         updatedAt: true,
-        user: { select: { id: true, name: true } },
+        user: { select: { id: true, name: true, email: true, photoUrl: true } },
       },
     });
   }
@@ -537,7 +537,7 @@ export class ProjetoRepository {
         oldValue: true,
         newValue: true,
         changedAt: true,
-        user: { select: { id: true, name: true } },
+        user: { select: { id: true, name: true, email: true, photoUrl: true } },
       },
     });
   }

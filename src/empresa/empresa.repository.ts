@@ -33,6 +33,7 @@ export class EmpresaRepository {
           phone: true,
           isActive: true,
           mustResetPassword: true,
+          photoUrl: true,
           createdAt: true,
         },
       }),
