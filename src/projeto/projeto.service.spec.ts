@@ -78,7 +78,9 @@ function makeService(repo: jest.Mocked<ProjetoRepository>) {
     error: jest.fn(),
     debug: jest.fn(),
   };
-  const service = new ProjetoService(repo, logger as never);
+  const kanbanGateway = { broadcastKanbanUpdate: jest.fn() } as never;
+  const notificacaoService = { notificar: jest.fn() } as never;
+  const service = new ProjetoService(repo, kanbanGateway, notificacaoService, logger as never);
   return service;
 }
 
