@@ -78,7 +78,7 @@ function makeService(repo: jest.Mocked<ProjetoRepository>) {
     error: jest.fn(),
     debug: jest.fn(),
   };
-  const kanbanGateway = { broadcastKanbanUpdate: jest.fn() } as never;
+  const kanbanGateway = { emitToProject: jest.fn() } as never;
   const notificacaoService = { notificar: jest.fn() } as never;
   const service = new ProjetoService(repo, kanbanGateway, notificacaoService, logger as never);
   return service;
@@ -205,6 +205,7 @@ describe('ProjetoService', () => {
         .mockResolvedValueOnce(makeColumn({ id: 'col-1' }))
         .mockResolvedValueOnce(makeColumn({ id: 'col-2' }));
       repo.countActiveTasksInColumn.mockResolvedValue(2);
+      repo.findTasksByColumn.mockResolvedValue([makeTask()]);
       repo.softDeleteColunaWithMigration.mockResolvedValue(makeColumn());
       const service = makeService(repo);
 
