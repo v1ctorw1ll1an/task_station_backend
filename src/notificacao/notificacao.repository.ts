@@ -14,6 +14,8 @@ const NOTIFICATION_SELECT = {
   projectId: true,
   actorId: true,
   actor: { select: { id: true, name: true } },
+  task: { select: { id: true, title: true } },
+  project: { select: { id: true, name: true, workspaceId: true } },
 } as const;
 
 @Injectable()
