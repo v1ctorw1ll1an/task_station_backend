@@ -122,17 +122,18 @@ model Workspace {
 }
 
 model Project {
-  id          String    @id @default(uuid())
-  workspaceId String    @map("workspace_id")
-  name        String
-  description String?
-  isActive    Boolean   @default(true) @map("is_active")
-  icon        String?   @map("icon")
-  iconColor   String?   @map("icon_color")
-  createdById String    @map("created_by")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt     @map("updated_at")
-  deletedAt   DateTime?                @map("deleted_at")
+  id           String    @id @default(uuid())
+  workspaceId  String    @map("workspace_id")
+  name         String
+  description  String?
+  isActive     Boolean   @default(true) @map("is_active")
+  icon         String?   @map("icon")
+  iconColor    String?   @map("icon_color")
+  taskCounter  Int       @default(0) @map("task_counter")
+  createdById  String    @map("created_by")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt     @map("updated_at")
+  deletedAt    DateTime?                @map("deleted_at")
 
   workspace            Workspace            @relation(fields: [workspaceId], references: [id])
   createdBy            User                 @relation("ProjectCreatedBy", fields: [createdById], references: [id])
@@ -164,20 +165,21 @@ model Column {
 }
 
 model Task {
-  id         String       @id @default(uuid())
-  projectId  String       @map("project_id")
-  columnId   String       @map("column_id")
-  title      String
+  id          String       @id @default(uuid())
+  projectId   String       @map("project_id")
+  columnId    String       @map("column_id")
+  taskNumber  Int?         @map("task_number")
+  title       String
   description String?
-  priority   TaskPriority @default(medium)
-  order      Int
-  reporterId String       @map("reporter_id")
-  startDate  DateTime?    @map("start_date")  @db.Date
-  dueDate    DateTime?    @map("due_date")    @db.Date
-  createdById String      @map("created_by")
-  createdAt  DateTime     @default(now()) @map("created_at")
-  updatedAt  DateTime     @updatedAt      @map("updated_at")
-  deletedAt  DateTime?                    @map("deleted_at")
+  priority    TaskPriority @default(medium)
+  order       Int
+  reporterId  String       @map("reporter_id")
+  startDate   DateTime?    @map("start_date")  @db.Date
+  dueDate     DateTime?    @map("due_date")    @db.Date
+  createdById String       @map("created_by")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt      @map("updated_at")
+  deletedAt   DateTime?                    @map("deleted_at")
 
   project    Project    @relation(fields: [projectId],  references: [id])
   column     Column     @relation(fields: [columnId],   references: [id])
@@ -190,6 +192,7 @@ model Task {
   taskAttachments  TaskAttachment[]
   notifications    Notification[]
 
+  @@unique([projectId, taskNumber])
   @@index([columnId, order])
   @@index([projectId, deletedAt])
   @@index([reporterId])

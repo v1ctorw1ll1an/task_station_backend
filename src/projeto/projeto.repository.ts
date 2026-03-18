@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 const TASK_SELECT = {
   id: true,
+  taskNumber: true,
   title: true,
   description: true,
   priority: true,
@@ -178,35 +179,47 @@ export class ProjetoRepository {
     dueDate?: string;
     labelIds?: string[];
   }) {
-    // Buscar maior ordem atual na coluna
-    const lastTask = await this.prisma.task.findFirst({
-      where: { columnId: data.columnId, deletedAt: null },
-      orderBy: { order: 'desc' },
-      select: { order: true },
-    });
+    return this.prisma.$transaction(async (tx) => {
+      // Incrementa o contador do projeto atomicamente e obtém o novo valor
+      const updatedProject = await tx.project.update({
+        where: { id: data.projectId },
+        data: { taskCounter: { increment: 1 } },
+        select: { taskCounter: true },
+      });
 
-    const order = (lastTask?.order ?? 0) + 1000;
+      const taskNumber = updatedProject.taskCounter;
 
-    return this.prisma.task.create({
-      data: {
-        projectId: data.projectId,
-        columnId: data.columnId,
-        title: data.title,
-        description: data.description,
-        priority: data.priority ?? TaskPriority.medium,
-        order,
-        reporterId: data.reporterId,
-        createdById: data.createdById,
-        startDate: data.startDate ? new Date(data.startDate) : undefined,
-        dueDate: data.dueDate ? new Date(data.dueDate) : undefined,
-        ...(data.labelIds?.length
-          ? { taskLabels: { create: data.labelIds.map((labelId) => ({ labelId })) } }
-          : {}),
-        ...(data.assigneeIds?.length
-          ? { taskAssignees: { create: data.assigneeIds.map((userId) => ({ userId })) } }
-          : {}),
-      },
-      select: TASK_SELECT,
+      // Buscar maior ordem atual na coluna
+      const lastTask = await tx.task.findFirst({
+        where: { columnId: data.columnId, deletedAt: null },
+        orderBy: { order: 'desc' },
+        select: { order: true },
+      });
+
+      const order = (lastTask?.order ?? 0) + 1000;
+
+      return tx.task.create({
+        data: {
+          projectId: data.projectId,
+          columnId: data.columnId,
+          taskNumber,
+          title: data.title,
+          description: data.description,
+          priority: data.priority ?? TaskPriority.medium,
+          order,
+          reporterId: data.reporterId,
+          createdById: data.createdById,
+          startDate: data.startDate ? new Date(data.startDate) : undefined,
+          dueDate: data.dueDate ? new Date(data.dueDate) : undefined,
+          ...(data.labelIds?.length
+            ? { taskLabels: { create: data.labelIds.map((labelId) => ({ labelId })) } }
+            : {}),
+          ...(data.assigneeIds?.length
+            ? { taskAssignees: { create: data.assigneeIds.map((userId) => ({ userId })) } }
+            : {}),
+        },
+        select: TASK_SELECT,
+      });
     });
   }
 
@@ -358,6 +371,11 @@ export class ProjetoRepository {
   }
 
   async getKanban(projectId: string) {
+    const project = await this.prisma.project.findFirst({
+      where: { id: projectId, deletedAt: null },
+      select: { id: true, name: true },
+    });
+
     const columns = await this.prisma.column.findMany({
       where: { projectId, deletedAt: null },
       orderBy: { order: 'asc' },
@@ -371,7 +389,7 @@ export class ProjetoRepository {
       },
     });
 
-    return { columns };
+    return { columns, projectName: project?.name ?? '' };
   }
 
   // ── Membros do workspace (para select de responsável) ─────────────────────────
