@@ -121,7 +121,12 @@ export class EmpresaRepository {
   }
 
   findWorkspaces(
-    where: { companyId: string; deletedAt: null; isActive?: boolean },
+    where: {
+      companyId: string;
+      deletedAt: null;
+      isActive?: boolean;
+      name?: { contains: string; mode: 'insensitive' };
+    },
     page: number,
     limit: number,
   ) {

@@ -22,6 +22,7 @@ import { ListUsersQueryDto } from './dto/list-users-query.dto';
 import { UpdateCompanyDto } from './dto/update-company.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { ToggleSuperuserDto } from './dto/toggle-superuser.dto';
 import { NotificacaoService } from '../notificacao/notificacao.service';
 import { BroadcastDto } from '../notificacao/dto/broadcast.dto';
 
@@ -147,6 +148,19 @@ export class SuperadminController {
     return this.superadminService.invalidateUserCredentials(id, user.id);
   }
 
+  @Patch('usuarios/:id/superusuario')
+  @ApiOperation({ summary: 'Promover ou revogar status de superusuário' })
+  @ApiResponse({ status: 200, description: 'Status atualizado' })
+  @ApiResponse({ status: 400, description: 'Auto-modificação ou último superusuário' })
+  @ApiResponse({ status: 404, description: 'Usuário não encontrado' })
+  toggleSuperuser(
+    @Param('id') id: string,
+    @Body() dto: ToggleSuperuserDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.superadminService.toggleSuperuser(id, user.id, dto.isSuperuser);
+  }
+
   @Get('usuarios/:id/magic-link')
   @ApiOperation({ summary: 'Obter (ou regenerar) magic link de primeiro acesso do usuário' })
   @ApiResponse({
@@ -161,8 +175,15 @@ export class SuperadminController {
   // ── Broadcast ─────────────────────────────────────────────────────────────────
 
   @Post('broadcast')
-  @ApiOperation({ summary: 'Enviar notificação para todos ou um usuário' })
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Enviar notificação para todos, empresas específicas ou um usuário' })
   async broadcast(@CurrentUser() user: AuthUser, @Body() dto: BroadcastDto) {
-    await this.notificacaoService.broadcast(user.id, dto.title, dto.body, dto.targetUserId);
+    await this.notificacaoService.broadcast(
+      user.id,
+      dto.title,
+      dto.body,
+      dto.targetUserId,
+      dto.companyIds,
+    );
   }
 }

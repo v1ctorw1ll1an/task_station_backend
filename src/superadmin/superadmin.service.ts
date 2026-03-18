@@ -319,6 +319,26 @@ export class SuperadminService {
     return { magicLink: `${frontendUrl}/first-access?token=${rawToken}` };
   }
 
+  async toggleSuperuser(targetId: string, performedById: string, isSuperuser: boolean) {
+    if (targetId === performedById) {
+      throw new BadRequestException('Não é possível alterar o próprio status de superusuário');
+    }
+
+    const target = await this.repo.findUserById(targetId);
+    if (!target) throw new NotFoundException('Usuário não encontrado');
+
+    if (!isSuperuser) {
+      const count = await this.repo.countSuperusers();
+      if (count <= 1) {
+        throw new BadRequestException('Não é possível revogar o único superusuário do sistema');
+      }
+    }
+
+    const updated = await this.repo.updateUserSuperuserStatus(targetId, isSuperuser);
+    this.logger.info({ performedById, targetId, isSuperuser }, 'Superuser status toggled');
+    return updated;
+  }
+
   async getMagicLink(targetUserId: string) {
     const rawToken = await this.authService.getOrRegenerateFirstAccessToken(targetUserId);
     if (!rawToken) {

@@ -65,6 +65,13 @@ export class NotificacaoController {
     return this.notificacaoService.markAsRead(id, user.id);
   }
 
+  @Delete()
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Limpar todas as notificações do usuário logado' })
+  clearAll(@CurrentUser() user: AuthUser) {
+    return this.notificacaoService.clearAll(user.id);
+  }
+
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Remover uma notificação' })

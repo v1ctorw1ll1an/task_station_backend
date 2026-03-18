@@ -106,6 +106,7 @@ export class NotificacaoService {
     title: string,
     body: string,
     targetUserId?: string,
+    companyIds?: string[],
   ): Promise<void> {
     if (targetUserId) {
       await this.notify({
@@ -118,6 +119,24 @@ export class NotificacaoService {
       return;
     }
 
+    if (companyIds && companyIds.length > 0) {
+      const userIds = await this.repo.findUserIdsByCompanies(companyIds);
+      await this.notifyMany(
+        userIds.map((id) => ({
+          type: NotificationType.ADMIN_BROADCAST,
+          recipientId: id,
+          actorId,
+          title,
+          body,
+        })),
+      );
+      this.logger.info(
+        { actorId, companyIds, count: userIds.length },
+        'Superadmin broadcast sent to companies',
+      );
+      return;
+    }
+
     const users = await this.repo.findAllActiveUsers();
     await this.notifyMany(
       users.map((u) => ({
@@ -127,6 +146,30 @@ export class NotificacaoService {
         title,
         body,
       })),
+    );
+    this.logger.info({ actorId, count: users.length }, 'Superadmin global broadcast sent');
+  }
+
+  async broadcastToCompany(
+    actorId: string,
+    companyId: string,
+    title: string,
+    body: string,
+    workspaceIds?: string[],
+  ): Promise<void> {
+    const userIds = await this.repo.findUserIdsByCompany(companyId, workspaceIds);
+    await this.notifyMany(
+      userIds.map((id) => ({
+        type: NotificationType.ADMIN_BROADCAST,
+        recipientId: id,
+        actorId,
+        title,
+        body,
+      })),
+    );
+    this.logger.info(
+      { actorId, companyId, workspaceIds, count: userIds.length },
+      'Company broadcast sent',
     );
   }
 
@@ -150,6 +193,10 @@ export class NotificacaoService {
 
   async deleteNotification(id: string, userId: string) {
     await this.repo.softDelete(id, userId);
+  }
+
+  async clearAll(userId: string): Promise<void> {
+    await this.repo.clearAll(userId);
   }
 
   async getPreference(userId: string) {

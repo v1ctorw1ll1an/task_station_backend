@@ -21,6 +21,7 @@ import { ContratarMembroDto } from './dto/contratar-membro.dto';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { ListMembersQueryDto } from './dto/list-members-query.dto';
 import { ListWorkspacesQueryDto } from './dto/list-workspaces-query.dto';
+import { CompanyBroadcastDto } from '../notificacao/dto/broadcast.dto';
 import { PromoteMemberDto } from './dto/promote-member.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 
@@ -356,5 +357,21 @@ export class EmpresaController {
     @CurrentUser() user: AuthUser,
   ) {
     await this.empresaService.revokeWorkspaceAdmin(companyId, workspaceId, userId, user.id);
+  }
+
+  // ── Broadcast ─────────────────────────────────────────────────────────────────
+
+  @Post('broadcast')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Enviar comunicado para membros da empresa (ou workspaces específicos)',
+  })
+  @ApiResponse({ status: 204, description: 'Comunicado enviado' })
+  async broadcastToCompany(
+    @Param('companyId') companyId: string,
+    @Body() dto: CompanyBroadcastDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    await this.empresaService.broadcastToCompany(companyId, dto, user.id);
   }
 }

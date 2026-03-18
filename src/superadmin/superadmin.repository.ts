@@ -140,6 +140,18 @@ export class SuperadminRepository {
     });
   }
 
+  countSuperusers() {
+    return this.prisma.user.count({ where: { isSuperuser: true, deletedAt: null } });
+  }
+
+  updateUserSuperuserStatus(userId: string, isSuperuser: boolean) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { isSuperuser },
+      select: { id: true, name: true, email: true, isSuperuser: true },
+    });
+  }
+
   updateUser(id: string, data: Record<string, unknown>) {
     return this.prisma.user.update({
       where: { id },

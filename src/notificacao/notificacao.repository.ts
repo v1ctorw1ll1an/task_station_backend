@@ -15,7 +15,16 @@ const NOTIFICATION_SELECT = {
   actorId: true,
   actor: { select: { id: true, name: true } },
   task: { select: { id: true, title: true } },
-  project: { select: { id: true, name: true, workspaceId: true } },
+  project: {
+    select: {
+      id: true,
+      name: true,
+      workspaceId: true,
+      icon: true,
+      iconColor: true,
+      workspace: { select: { name: true } },
+    },
+  },
 } as const;
 
 @Injectable()
@@ -75,6 +84,13 @@ export class NotificacaoRepository {
     });
   }
 
+  clearAll(userId: string) {
+    return this.prisma.notification.updateMany({
+      where: { recipientId: userId, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+  }
+
   getOrCreatePreference(userId: string) {
     return this.prisma.notificationPreference.upsert({
       where: { userId },
@@ -104,6 +120,54 @@ export class NotificacaoRepository {
       where: { deletedAt: null, isActive: true },
       select: { id: true },
     });
+  }
+
+  async findUserIdsByCompanies(companyIds: string[]): Promise<string[]> {
+    const memberships = await this.prisma.membership.findMany({
+      where: {
+        resourceType: 'company',
+        resourceId: { in: companyIds },
+        deletedAt: null,
+        user: { isActive: true, deletedAt: null },
+      },
+      select: { userId: true },
+    });
+    return [...new Set(memberships.map((m) => m.userId))];
+  }
+
+  async findUserIdsByCompany(companyId: string, workspaceIds?: string[]): Promise<string[]> {
+    let memberships: { userId: string }[];
+    if (workspaceIds && workspaceIds.length > 0) {
+      memberships = await this.prisma.membership.findMany({
+        where: {
+          resourceType: 'workspace',
+          resourceId: { in: workspaceIds },
+          deletedAt: null,
+          user: { isActive: true, deletedAt: null },
+        },
+        select: { userId: true },
+      });
+    } else {
+      const companyWorkspaces = await this.prisma.workspace.findMany({
+        where: { companyId, deletedAt: null },
+        select: { id: true },
+      });
+      const wsIds = companyWorkspaces.map((w) => w.id);
+      memberships = await this.prisma.membership.findMany({
+        where: {
+          deletedAt: null,
+          user: { isActive: true, deletedAt: null },
+          OR: [
+            { resourceType: 'company', resourceId: companyId },
+            ...(wsIds.length > 0
+              ? [{ resourceType: 'workspace' as const, resourceId: { in: wsIds } }]
+              : []),
+          ],
+        },
+        select: { userId: true },
+      });
+    }
+    return [...new Set(memberships.map((m) => m.userId))];
   }
 
   findPreferencesForUsers(userIds: string[]) {

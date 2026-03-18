@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class ListWorkspacesQueryDto {
   @ApiPropertyOptional({ description: 'Filtrar por status ativo/inativo' })
@@ -10,6 +10,11 @@ export class ListWorkspacesQueryDto {
   )
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({ description: 'Busca por nome do workspace' })
+  @IsOptional()
+  @IsString()
+  search?: string;
 
   @ApiPropertyOptional({ default: 1, minimum: 1 })
   @IsOptional()

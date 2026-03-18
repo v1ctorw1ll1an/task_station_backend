@@ -12,11 +12,13 @@ import * as crypto from 'crypto';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { AuthService } from '../auth/auth.service';
 import { MailerService } from '../mailer/mailer.service';
+import { NotificacaoService } from '../notificacao/notificacao.service';
 import { EmpresaRepository } from './empresa.repository';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { ListMembersQueryDto } from './dto/list-members-query.dto';
 import { ListWorkspacesQueryDto } from './dto/list-workspaces-query.dto';
 import { ContratarMembroDto } from './dto/contratar-membro.dto';
+import { CompanyBroadcastDto } from '../notificacao/dto/broadcast.dto';
 import { PromoteMemberDto } from './dto/promote-member.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 
@@ -27,6 +29,7 @@ export class EmpresaService {
     private readonly mailerService: MailerService,
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
+    private readonly notificacaoService: NotificacaoService,
     @InjectPinoLogger(EmpresaService.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -53,15 +56,24 @@ export class EmpresaService {
   }
 
   async listWorkspaces(companyId: string, query: ListWorkspacesQueryDto) {
-    const { isActive, page = 1, limit = 20 } = query;
+    const { isActive, search, page = 1, limit = 20 } = query;
 
-    const where: { companyId: string; deletedAt: null; isActive?: boolean } = {
+    const where: {
+      companyId: string;
+      deletedAt: null;
+      isActive?: boolean;
+      name?: { contains: string; mode: 'insensitive' };
+    } = {
       companyId,
       deletedAt: null,
     };
 
     if (isActive !== undefined) {
       where.isActive = isActive;
+    }
+
+    if (search) {
+      where.name = { contains: search, mode: 'insensitive' };
     }
 
     const [data, total] = await this.repo.findWorkspaces(where, page, limit);
@@ -888,6 +900,16 @@ export class EmpresaService {
     this.logger.info(
       { companyId, workspaceId, targetUserId, performedById },
       'Workspace admin role revoked',
+    );
+  }
+
+  async broadcastToCompany(companyId: string, dto: CompanyBroadcastDto, actorId: string) {
+    return this.notificacaoService.broadcastToCompany(
+      actorId,
+      companyId,
+      dto.title,
+      dto.body,
+      dto.workspaceIds,
     );
   }
 }
