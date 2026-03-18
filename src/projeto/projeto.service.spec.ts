@@ -32,6 +32,7 @@ function makeTask(overrides: Record<string, unknown> = {}) {
     description: null,
     priority: TaskPriority.medium,
     order: 1000,
+    taskNumber: null,
     dueDate: null,
     startDate: null,
     columnId: 'col-1',
@@ -93,6 +94,7 @@ describe('ProjetoService', () => {
       const repo = makeRepo();
       repo.findProjectById.mockResolvedValue(makeProject());
       repo.getKanban.mockResolvedValue({
+        projectName: 'Projeto 1',
         columns: [{ ...makeColumn(), tasks: [makeTask()] }],
       });
       const service = makeService(repo);
