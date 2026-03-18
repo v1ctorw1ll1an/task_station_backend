@@ -340,4 +340,94 @@ export class WorkspaceService {
       'Workspace admin role revoked, user downgraded to member',
     );
   }
+
+  // ── Visão Geral ───────────────────────────────────────────────────────────────
+
+  async getVisaoGeral(workspaceId: string, userId: string, isAdmin = false) {
+    const workspace = await this.repo.findWorkspaceById(workspaceId);
+    if (!workspace) throw new NotFoundException('Workspace não encontrado');
+
+    let excludeProjectIds: string[] = [];
+    if (!isAdmin) {
+      const restricted = await this.repo.findRestrictedProjectIds(workspaceId, userId);
+      excludeProjectIds = restricted.map((r) => r.projectId);
+    }
+
+    const projects = await this.repo.findProjectsWithTasksForOverview(
+      workspaceId,
+      excludeProjectIds,
+    );
+
+    return projects.map((project) => {
+      const prefix = computeTaskPrefix(project.name);
+
+      const columns = project.columns.map((col) => ({
+        id: col.id,
+        name: col.name,
+        color: col.color,
+        order: col.order,
+        taskCount: col.tasks.length,
+        tasks: col.tasks.map((task) => ({
+          id: task.id,
+          taskNumber: task.taskNumber,
+          taskRef: task.taskNumber != null ? `${prefix}-${task.taskNumber}` : null,
+          title: task.title,
+          priority: task.priority,
+          dueDate: task.dueDate,
+          startDate: task.startDate,
+          createdAt: task.createdAt,
+          updatedAt: task.updatedAt,
+          columnId: task.columnId,
+          assignees: task.taskAssignees.map((a) => a.user),
+        })),
+      }));
+
+      const totalTasks = columns.reduce((sum, col) => sum + col.taskCount, 0);
+
+      return {
+        id: project.id,
+        name: project.name,
+        icon: project.icon,
+        iconColor: project.iconColor,
+        taskPrefix: prefix,
+        totalTasks,
+        columns,
+      };
+    });
+  }
+
+  async resolveTaskRef(workspaceId: string, taskRef: string) {
+    const workspace = await this.repo.findWorkspaceById(workspaceId);
+    if (!workspace) throw new NotFoundException('Workspace não encontrado');
+
+    // taskRef format: PREFIX-NUMBER (e.g. TS-42)
+    const match = /^([A-Z]+)-(\d+)$/i.exec(taskRef.trim());
+    if (!match) throw new NotFoundException('Referência de task inválida');
+
+    const taskNumber = parseInt(match[2], 10);
+    const prefix = match[1].toUpperCase();
+
+    const task = await this.repo.findTaskByRef(workspaceId, taskNumber);
+    if (!task) throw new NotFoundException('Task não encontrada');
+
+    // Validate prefix matches project name
+    const expectedPrefix = computeTaskPrefix(task.project.name);
+    if (expectedPrefix !== prefix) throw new NotFoundException('Task não encontrada');
+
+    return {
+      taskId: task.id,
+      projectId: task.projectId,
+      taskNumber: task.taskNumber,
+      taskRef: `${prefix}-${task.taskNumber}`,
+      title: task.title,
+    };
+  }
+}
+
+function computeTaskPrefix(projectName: string): string {
+  const words = projectName.trim().split(/\s+/).filter(Boolean);
+  if (words.length >= 2) {
+    return words.map((w) => w[0].toUpperCase()).join('');
+  }
+  return words[0].slice(0, 3).toUpperCase();
 }

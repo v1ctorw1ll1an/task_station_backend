@@ -214,4 +214,72 @@ export class WorkspaceRepository {
       this.prisma.user.count({ where }),
     ]);
   }
+
+  // ── Visão Geral ───────────────────────────────────────────────────────────────
+
+  findProjectsWithTasksForOverview(workspaceId: string, excludeProjectIds: string[] = []) {
+    return this.prisma.project.findMany({
+      where: {
+        workspaceId,
+        deletedAt: null,
+        isActive: true,
+        ...(excludeProjectIds.length > 0 ? { id: { notIn: excludeProjectIds } } : {}),
+      },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        icon: true,
+        iconColor: true,
+        columns: {
+          where: { deletedAt: null },
+          orderBy: { order: 'asc' },
+          select: {
+            id: true,
+            name: true,
+            color: true,
+            order: true,
+            tasks: {
+              where: { deletedAt: null },
+              orderBy: { taskNumber: 'asc' },
+              select: {
+                id: true,
+                taskNumber: true,
+                title: true,
+                priority: true,
+                dueDate: true,
+                startDate: true,
+                createdAt: true,
+                updatedAt: true,
+                columnId: true,
+                taskAssignees: {
+                  select: {
+                    user: { select: { id: true, name: true, photoUrl: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  findTaskByRef(workspaceId: string, taskNumber: number) {
+    return this.prisma.task.findFirst({
+      where: {
+        taskNumber,
+        deletedAt: null,
+        project: { workspaceId, deletedAt: null, isActive: true },
+      },
+      select: {
+        id: true,
+        taskNumber: true,
+        title: true,
+        projectId: true,
+        columnId: true,
+        project: { select: { id: true, name: true } },
+      },
+    });
+  }
 }

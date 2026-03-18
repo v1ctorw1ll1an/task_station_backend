@@ -205,4 +205,27 @@ export class WorkspaceController {
   ) {
     await this.workspaceService.revokeAdmin(workspaceId, userId, user.id);
   }
+
+  // ── Visão Geral ───────────────────────────────────────────────────────────────
+
+  @Get('visao-geral')
+  @UseGuards(WorkspaceMemberGuard)
+  @ApiOperation({ summary: 'Visão geral: todos os projetos com suas tasks agrupadas por coluna' })
+  @ApiResponse({ status: 200, description: 'Dados de visão geral do workspace' })
+  getVisaoGeral(
+    @Param('workspaceId') workspaceId: string,
+    @Request() req: { workspaceMemberRole?: string; user: AuthUser },
+  ) {
+    const isAdmin = req.workspaceMemberRole === 'workspace_admin';
+    return this.workspaceService.getVisaoGeral(workspaceId, req.user.id, isAdmin);
+  }
+
+  @Get('task/:taskRef')
+  @UseGuards(WorkspaceMemberGuard)
+  @ApiOperation({ summary: 'Resolver referência de task (ex: TS-42) para taskId e projectId' })
+  @ApiResponse({ status: 200, description: 'Task encontrada' })
+  @ApiResponse({ status: 404, description: 'Task não encontrada' })
+  resolveTaskRef(@Param('workspaceId') workspaceId: string, @Param('taskRef') taskRef: string) {
+    return this.workspaceService.resolveTaskRef(workspaceId, taskRef);
+  }
 }
