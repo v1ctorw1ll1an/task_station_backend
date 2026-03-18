@@ -31,6 +31,8 @@ export class WorkspaceService {
       name: dto.name,
       description: dto.description,
       createdById,
+      icon: dto.icon,
+      iconColor: dto.iconColor,
     });
 
     this.logger.info(

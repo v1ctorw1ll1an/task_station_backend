@@ -7,6 +7,8 @@ const PROJECT_SELECT = {
   name: true,
   description: true,
   isActive: true,
+  icon: true,
+  iconColor: true,
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -92,6 +94,8 @@ export class WorkspaceRepository {
     name: string;
     description?: string;
     createdById: string;
+    icon?: string;
+    iconColor?: string;
   }) {
     return this.prisma.$transaction(async (tx) => {
       const project = await tx.project.create({
@@ -100,6 +104,8 @@ export class WorkspaceRepository {
           name: params.name,
           description: params.description,
           createdById: params.createdById,
+          icon: params.icon,
+          iconColor: params.iconColor,
         },
         select: PROJECT_SELECT,
       });

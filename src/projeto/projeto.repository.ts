@@ -21,6 +21,7 @@ const TASK_SELECT = {
     where: { label: { deletedAt: null } },
     select: { label: { select: { id: true, name: true, color: true } } },
   },
+  _count: { select: { taskComments: true } },
 } as const;
 
 const LABEL_SELECT = {

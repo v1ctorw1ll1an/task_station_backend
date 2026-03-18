@@ -127,6 +127,8 @@ model Project {
   name        String
   description String?
   isActive    Boolean   @default(true) @map("is_active")
+  icon        String?   @map("icon")
+  iconColor   String?   @map("icon_color")
   createdById String    @map("created_by")
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt     @map("updated_at")

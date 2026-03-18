@@ -11,4 +11,14 @@ export class CreateProjectDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @ApiPropertyOptional({ example: 'FolderKanban' })
+  @IsOptional()
+  @IsString()
+  icon?: string;
+
+  @ApiPropertyOptional({ example: '#6366f1' })
+  @IsOptional()
+  @IsString()
+  iconColor?: string;
 }
