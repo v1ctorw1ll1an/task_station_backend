@@ -14,6 +14,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { ProjetoModule } from './projeto/projeto.module';
 import { SuperadminModule } from './superadmin/superadmin.module';
 import { NotificacaoModule } from './notificacao/notificacao.module';
+import { UploadModule } from './upload/upload.module';
 
 @Module({
   imports: [
@@ -75,6 +76,7 @@ import { NotificacaoModule } from './notificacao/notificacao.module';
     MeModule,
     ProjetoModule,
     NotificacaoModule,
+    UploadModule,
   ],
   providers: [
     {
