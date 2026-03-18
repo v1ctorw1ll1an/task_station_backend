@@ -13,6 +13,7 @@ import sharp from 'sharp';
 import { MeRepository } from './me.repository';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdatePasswordDto } from './dto/update-password.dto';
+import { ListMyTasksQueryDto, TaskDateFilter } from './dto/list-my-tasks-query.dto';
 
 const AVATARS_ROOT = join(process.cwd(), 'uploads', 'avatars');
 const ALLOWED_MIME = new Set([
@@ -102,6 +103,68 @@ export class MeService {
   getAvatarPath(userId: string): string | null {
     const p = join(AVATARS_ROOT, `${userId}.webp`);
     return existsSync(p) ? p : null;
+  }
+
+  async getMyTasks(userId: string, dto: ListMyTasksQueryDto) {
+    const { companyId, filter, page = 1, limit = 20 } = dto;
+    const dueDateFilter = this.buildDueDateFilter(dto);
+
+    const [data, total] = await Promise.all([
+      this.repo.findUserTasksByCompany(userId, companyId, dueDateFilter, page, limit),
+      this.repo.countUserTasksByCompany(userId, companyId, dueDateFilter),
+    ]);
+
+    this.logger.info({ userId, companyId, filter, total }, 'User tasks fetched');
+    return { data, total, page, limit };
+  }
+
+  private buildDueDateFilter(dto: ListMyTasksQueryDto): { gte?: Date; lte?: Date } | undefined {
+    if (!dto.filter) return undefined;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const endOfDay = (d: Date) => {
+      const end = new Date(d);
+      end.setHours(23, 59, 59, 999);
+      return end;
+    };
+
+    switch (dto.filter) {
+      case TaskDateFilter.TODAY:
+        return { gte: today, lte: endOfDay(today) };
+
+      case TaskDateFilter.TOMORROW: {
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        return { gte: tomorrow, lte: endOfDay(tomorrow) };
+      }
+
+      case TaskDateFilter.THIS_WEEK: {
+        const sunday = new Date(today);
+        sunday.setDate(sunday.getDate() + (7 - sunday.getDay()));
+        return { gte: today, lte: endOfDay(sunday) };
+      }
+
+      case TaskDateFilter.OVERDUE: {
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        return { lte: endOfDay(yesterday) };
+      }
+
+      case TaskDateFilter.CUSTOM: {
+        const result: { gte?: Date; lte?: Date } = {};
+        if (dto.dueDateFrom) result.gte = new Date(dto.dueDateFrom);
+        if (dto.dueDateTo) {
+          const to = new Date(dto.dueDateTo);
+          result.lte = endOfDay(to);
+        }
+        return Object.keys(result).length > 0 ? result : undefined;
+      }
+
+      default:
+        return undefined;
+    }
   }
 
   async getMyCompanies(userId: string) {

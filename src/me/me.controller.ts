@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Res,
   UploadedFile,
   UseInterceptors,
@@ -21,6 +22,7 @@ import { AuthUser } from '../auth/strategies/jwt.strategy';
 import { MeService } from './me.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdatePasswordDto } from './dto/update-password.dto';
+import { ListMyTasksQueryDto } from './dto/list-my-tasks-query.dto';
 
 @ApiTags('me')
 @ApiBearerAuth()
@@ -73,6 +75,13 @@ export class MeController {
   @ApiResponse({ status: 401, description: 'Senha atual incorreta' })
   updatePassword(@CurrentUser() user: AuthUser, @Body() dto: UpdatePasswordDto) {
     return this.meService.updatePassword(user.id, dto);
+  }
+
+  @Get('tasks')
+  @ApiOperation({ summary: 'Tarefas atribuídas ao usuário (cross-workspace)' })
+  @ApiResponse({ status: 200, description: 'Lista paginada de tarefas do usuário' })
+  getMyTasks(@CurrentUser() user: AuthUser, @Query() query: ListMyTasksQueryDto) {
+    return this.meService.getMyTasks(user.id, query);
   }
 
   @Get('empresas')
