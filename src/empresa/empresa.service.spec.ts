@@ -115,6 +115,7 @@ function makeService(repo: jest.Mocked<EmpresaRepository>) {
     }),
   } as unknown as ConfigService;
   const logger = makeLogger();
+  const notificacaoService = { notifyUsers: jest.fn(), sendBroadcast: jest.fn() } as any;
 
   return {
     service: new EmpresaService(
@@ -122,6 +123,7 @@ function makeService(repo: jest.Mocked<EmpresaRepository>) {
       mailerService as any,
       authService as any,
       configService,
+      notificacaoService,
       logger as any,
     ),
     mailerService,

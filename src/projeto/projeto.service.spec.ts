@@ -40,6 +40,7 @@ function makeTask(overrides: Record<string, unknown> = {}) {
     taskAssignees: [],
     taskLabels: [],
     reporter: { id: 'user-1', name: 'User', email: 'user@test.com', photoUrl: null },
+    _count: { taskComments: 0 },
     ...overrides,
   };
 }
