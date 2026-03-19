@@ -23,6 +23,7 @@ import { AddWorkspaceMemberDto } from './dto/add-workspace-member.dto';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { ListProjectsQueryDto } from './dto/list-projects-query.dto';
 import { ListWorkspaceMembersQueryDto } from './dto/list-workspace-members-query.dto';
+import { MoveProjectDto } from './dto/move-project.dto';
 import { PromoteWorkspaceAdminDto } from './dto/promote-workspace-admin.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 
@@ -115,6 +116,22 @@ export class WorkspaceController {
     @Param('projectId') projectId: string,
   ) {
     return this.workspaceService.activateProject(workspaceId, projectId);
+  }
+
+  @Patch('projetos/:projectId/mover')
+  @UseGuards(WorkspaceMemberGuard)
+  @ApiOperation({ summary: 'Mover projeto para outro workspace (requer workspace_admin)' })
+  @ApiResponse({ status: 200, description: 'Projeto movido com sucesso' })
+  @ApiResponse({ status: 400, description: 'Workspace de destino inválido ou igual ao atual' })
+  @ApiResponse({ status: 403, description: 'Apenas workspace_admin pode mover projetos' })
+  @ApiResponse({ status: 404, description: 'Projeto ou workspace não encontrado' })
+  moveProject(
+    @Param('workspaceId') workspaceId: string,
+    @Param('projectId') projectId: string,
+    @Body() dto: MoveProjectDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.workspaceService.moveProjectToWorkspace(workspaceId, projectId, dto, user.id);
   }
 
   @Delete('projetos/:projectId')

@@ -265,6 +265,23 @@ export class WorkspaceRepository {
     });
   }
 
+  findWorkspacesByCompany(companyId: string, workspaceIds: string[]) {
+    return this.prisma.workspace.findMany({
+      where: { id: { in: workspaceIds }, companyId, deletedAt: null },
+      select: { id: true },
+    });
+  }
+
+  moveProjectToWorkspace(projectId: string, targetWorkspaceId: string) {
+    return this.prisma.$transaction([
+      this.prisma.project.update({
+        where: { id: projectId },
+        data: { workspaceId: targetWorkspaceId },
+      }),
+      this.prisma.userProjectOrder.deleteMany({ where: { projectId } }),
+    ]);
+  }
+
   findTaskByRef(workspaceId: string, taskNumber: number) {
     return this.prisma.task.findFirst({
       where: {

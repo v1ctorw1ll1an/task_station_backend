@@ -12,6 +12,7 @@ import { AddWorkspaceMemberDto } from './dto/add-workspace-member.dto';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { ListProjectsQueryDto } from './dto/list-projects-query.dto';
 import { ListWorkspaceMembersQueryDto } from './dto/list-workspace-members-query.dto';
+import { MoveProjectDto } from './dto/move-project.dto';
 import { PromoteWorkspaceAdminDto } from './dto/promote-workspace-admin.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 
@@ -127,6 +128,67 @@ export class WorkspaceService {
     const updated = await this.repo.updateProject(projectId, { isActive: true });
     this.logger.info({ workspaceId, projectId }, 'Project activated');
     return updated;
+  }
+
+  async moveProjectToWorkspace(
+    workspaceId: string,
+    projectId: string,
+    dto: MoveProjectDto,
+    userId: string,
+  ) {
+    const { targetWorkspaceId } = dto;
+
+    if (targetWorkspaceId === workspaceId) {
+      throw new BadRequestException('O workspace de destino deve ser diferente do atual');
+    }
+
+    const project = await this.repo.findProjectById(projectId, workspaceId);
+    if (!project) throw new NotFoundException('Projeto não encontrado');
+
+    const workspace = await this.repo.findWorkspaceById(workspaceId);
+    if (!workspace) throw new NotFoundException('Workspace não encontrado');
+
+    // Verificar que o workspace de destino pertence à mesma empresa
+    const [targetWs] = await this.repo.findWorkspacesByCompany(workspace.companyId, [
+      targetWorkspaceId,
+    ]);
+    if (!targetWs) {
+      throw new BadRequestException(
+        'Workspace de destino não encontrado ou pertence a outra empresa',
+      );
+    }
+
+    // Verificar que o usuário é workspace_admin do workspace de origem OU company admin
+    const [workspaceAdminMembership, companyAdminMembership] = await Promise.all([
+      this.repo.findMembership({
+        userId,
+        resourceType: ResourceType.workspace,
+        resourceId: workspaceId,
+        role: MembershipRole.workspace_admin,
+        deletedAt: null,
+      }),
+      this.repo.findMembership({
+        userId,
+        resourceType: ResourceType.company,
+        resourceId: workspace.companyId,
+        role: MembershipRole.admin,
+        deletedAt: null,
+      }),
+    ]);
+    if (!workspaceAdminMembership && !companyAdminMembership) {
+      throw new ForbiddenException(
+        'Apenas workspace_admin ou company admin pode mover projetos entre workspaces',
+      );
+    }
+
+    await this.repo.moveProjectToWorkspace(projectId, targetWorkspaceId);
+
+    this.logger.info(
+      { workspaceId, targetWorkspaceId, projectId, userId },
+      'Project moved to another workspace',
+    );
+
+    return { projectId, newWorkspaceId: targetWorkspaceId };
   }
 
   async deleteProject(workspaceId: string, projectId: string, performedById: string) {

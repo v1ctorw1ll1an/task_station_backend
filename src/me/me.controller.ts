@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Res,
   UploadedFile,
@@ -23,6 +24,8 @@ import { MeService } from './me.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdatePasswordDto } from './dto/update-password.dto';
 import { ListMyTasksQueryDto } from './dto/list-my-tasks-query.dto';
+import { SaveWorkspaceOrderDto } from './dto/save-workspace-order.dto';
+import { SaveProjectOrderDto } from './dto/save-project-order.dto';
 
 @ApiTags('me')
 @ApiBearerAuth()
@@ -96,5 +99,28 @@ export class MeController {
   @ApiResponse({ status: 200, description: 'Lista de workspaces do usuário autenticado' })
   getMyWorkspaces(@CurrentUser() user: AuthUser) {
     return this.meService.getMyWorkspaces(user.id);
+  }
+
+  @Get('sidebar-order/:companyId')
+  @ApiOperation({ summary: 'Retornar ordem de workspaces e projetos na sidebar do usuário' })
+  @ApiResponse({ status: 200, description: 'Ordens salvas pelo usuário' })
+  getSidebarOrder(@CurrentUser() user: AuthUser, @Param('companyId') companyId: string) {
+    return this.meService.getSidebarOrder(user.id, companyId);
+  }
+
+  @Put('workspace-order')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Salvar ordem dos workspaces na sidebar (por usuário)' })
+  @ApiResponse({ status: 204, description: 'Ordem salva' })
+  async saveWorkspaceOrder(@CurrentUser() user: AuthUser, @Body() dto: SaveWorkspaceOrderDto) {
+    await this.meService.saveWorkspaceOrder(user.id, dto);
+  }
+
+  @Put('project-order')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Salvar ordem dos projetos na sidebar (por usuário)' })
+  @ApiResponse({ status: 204, description: 'Ordem salva' })
+  async saveProjectOrder(@CurrentUser() user: AuthUser, @Body() dto: SaveProjectOrderDto) {
+    await this.meService.saveProjectOrder(user.id, dto);
   }
 }

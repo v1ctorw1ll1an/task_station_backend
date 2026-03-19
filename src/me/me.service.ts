@@ -14,6 +14,8 @@ import { MeRepository } from './me.repository';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdatePasswordDto } from './dto/update-password.dto';
 import { ListMyTasksQueryDto, TaskDateFilter } from './dto/list-my-tasks-query.dto';
+import { SaveWorkspaceOrderDto } from './dto/save-workspace-order.dto';
+import { SaveProjectOrderDto } from './dto/save-project-order.dto';
 
 const AVATARS_ROOT = join(process.cwd(), 'uploads', 'avatars');
 const ALLOWED_MIME = new Set([
@@ -165,6 +167,21 @@ export class MeService {
       default:
         return undefined;
     }
+  }
+
+  async getSidebarOrder(userId: string, companyId: string) {
+    const [workspaceOrders, projectOrders] = await this.repo.findSidebarOrders(userId, companyId);
+    return { workspaceOrders, projectOrders };
+  }
+
+  async saveWorkspaceOrder(userId: string, dto: SaveWorkspaceOrderDto) {
+    await this.repo.upsertWorkspaceOrder(userId, dto.companyId, dto.workspaceIds);
+    this.logger.info({ userId, companyId: dto.companyId }, 'Workspace order saved');
+  }
+
+  async saveProjectOrder(userId: string, dto: SaveProjectOrderDto) {
+    await this.repo.upsertProjectOrder(userId, dto.workspaceId, dto.projectIds);
+    this.logger.info({ userId, workspaceId: dto.workspaceId }, 'Project order saved');
   }
 
   async getMyCompanies(userId: string) {

@@ -81,6 +81,8 @@ model User {
   notifications           Notification[]   @relation("UserNotifications")
   triggeredNotifs         Notification[]   @relation("NotificationActors")
   notifPreference         NotificationPreference?
+  workspaceOrders         UserWorkspaceOrder[]
+  projectOrders           UserProjectOrder[]
 
   @@index([deletedAt])
   @@map("users")
@@ -113,9 +115,11 @@ model Workspace {
   updatedAt   DateTime  @updatedAt     @map("updated_at")
   deletedAt   DateTime?                @map("deleted_at")
 
-  company   Company   @relation(fields: [companyId], references: [id])
-  createdBy User      @relation("WorkspaceCreatedBy", fields: [createdById], references: [id])
-  projects  Project[]
+  company         Company              @relation(fields: [companyId], references: [id])
+  createdBy       User                 @relation("WorkspaceCreatedBy", fields: [createdById], references: [id])
+  projects        Project[]
+  workspaceOrders UserWorkspaceOrder[]
+  projectOrders   UserProjectOrder[]
 
   @@index([companyId])
   @@map("workspaces")
@@ -142,6 +146,7 @@ model Project {
   labels               Label[]
   projectRestrictions  ProjectRestriction[]
   notifications        Notification[]
+  projectOrders        UserProjectOrder[]
 
   @@index([workspaceId])
   @@map("projects")
@@ -376,4 +381,33 @@ model NotificationPreference {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("notification_preferences")
+}
+
+model UserWorkspaceOrder {
+  userId      String @map("user_id")
+  companyId   String @map("company_id")
+  workspaceId String @map("workspace_id")
+  position    Int
+
+  user      User      @relation(fields: [userId],      references: [id])
+  workspace Workspace @relation(fields: [workspaceId], references: [id])
+
+  @@id([userId, workspaceId])
+  @@index([userId, companyId])
+  @@map("user_workspace_orders")
+}
+
+model UserProjectOrder {
+  userId      String @map("user_id")
+  workspaceId String @map("workspace_id")
+  projectId   String @map("project_id")
+  position    Int
+
+  user      User      @relation(fields: [userId],      references: [id])
+  workspace Workspace @relation(fields: [workspaceId], references: [id])
+  project   Project   @relation(fields: [projectId],   references: [id])
+
+  @@id([userId, projectId])
+  @@index([userId, workspaceId])
+  @@map("user_project_orders")
 }

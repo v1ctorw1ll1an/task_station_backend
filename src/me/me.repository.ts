@@ -133,4 +133,47 @@ export class MeRepository {
       where: this.buildUserTasksWhere(userId, companyId, dueDateFilter),
     });
   }
+
+  // ── Sidebar Order ──────────────────────────────────────────────────────────────
+
+  findSidebarOrders(userId: string, companyId: string) {
+    return Promise.all([
+      this.prisma.userWorkspaceOrder.findMany({
+        where: { userId, companyId },
+        select: { workspaceId: true, position: true },
+      }),
+      this.prisma.userProjectOrder.findMany({
+        where: { userId, workspace: { companyId } },
+        select: { projectId: true, workspaceId: true, position: true },
+      }),
+    ]);
+  }
+
+  upsertWorkspaceOrder(userId: string, companyId: string, workspaceIds: string[]) {
+    return this.prisma.$transaction([
+      this.prisma.userWorkspaceOrder.deleteMany({ where: { userId, companyId } }),
+      this.prisma.userWorkspaceOrder.createMany({
+        data: workspaceIds.map((workspaceId, index) => ({
+          userId,
+          companyId,
+          workspaceId,
+          position: index,
+        })),
+      }),
+    ]);
+  }
+
+  upsertProjectOrder(userId: string, workspaceId: string, projectIds: string[]) {
+    return this.prisma.$transaction([
+      this.prisma.userProjectOrder.deleteMany({ where: { userId, workspaceId } }),
+      this.prisma.userProjectOrder.createMany({
+        data: projectIds.map((projectId, index) => ({
+          userId,
+          workspaceId,
+          projectId,
+          position: index,
+        })),
+      }),
+    ]);
+  }
 }
