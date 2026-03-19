@@ -111,9 +111,15 @@ export class WorkspaceRepository {
       });
 
       const columns = await Promise.all([
-        tx.column.create({ data: { projectId: project.id, name: 'A Fazer', order: 1 } }),
-        tx.column.create({ data: { projectId: project.id, name: 'Em Progresso', order: 2 } }),
-        tx.column.create({ data: { projectId: project.id, name: 'Concluído', order: 3 } }),
+        tx.column.create({
+          data: { projectId: project.id, name: 'A Fazer', order: 1, color: '#6366f1' },
+        }),
+        tx.column.create({
+          data: { projectId: project.id, name: 'Em Progresso', order: 2, color: '#3b82f6' },
+        }),
+        tx.column.create({
+          data: { projectId: project.id, name: 'Concluído', order: 3, color: '#22c55e' },
+        }),
       ]);
 
       return { project, columns };
