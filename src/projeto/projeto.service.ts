@@ -569,7 +569,7 @@ export class ProjetoService {
           const members = await this.repo.findWorkspaceMembersByProject(projectId);
           for (const match of mentionMatches) {
             const matched = members.find(
-              (m) => m.name.toLowerCase().replace(/\s+/g, '') === match.toLowerCase(),
+              (m) => m.name.toLowerCase().split(/\s+/)[0] === match.toLowerCase(),
             );
             if (matched && matched.id !== userId) {
               mentionedUserIds.add(matched.id);
