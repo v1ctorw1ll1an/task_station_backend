@@ -11,7 +11,7 @@ const adapter = new PrismaPg({
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
-  const email = process.env.SEED_SUPERUSER_EMAIL ?? 'admin@taskstation.com';
+  const email = process.env.SEED_SUPERUSER_EMAIL ?? 'admin@taskdy.com';
   const password = process.env.SEED_SUPERUSER_PASSWORD ?? 'Admin@123456';
 
   const existing = await prisma.user.findFirst({

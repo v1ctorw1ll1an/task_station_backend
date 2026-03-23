@@ -19,7 +19,7 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }));
 
   const config = new DocumentBuilder()
-    .setTitle('Task Station API')
+    .setTitle('TaskDY API')
     .setDescription('API de gestão de projetos e tasks')
     .setVersion('1.0')
     .addBearerAuth()
