@@ -118,7 +118,13 @@ export class WorkspaceRepository {
           data: { projectId: project.id, name: 'Em Progresso', order: 2, color: '#3b82f6' },
         }),
         tx.column.create({
-          data: { projectId: project.id, name: 'Concluído', order: 3, color: '#22c55e' },
+          data: {
+            projectId: project.id,
+            name: 'Concluído',
+            order: 3,
+            color: '#22c55e',
+            isDone: true,
+          },
         }),
       ]);
 
