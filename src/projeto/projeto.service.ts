@@ -23,6 +23,10 @@ import { CreateLabelDto } from './dto/create-label.dto';
 import { UpdateLabelDto } from './dto/update-label.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
+import { TransferTaskDto } from './dto/transfer-task.dto';
+import { PrismaService } from '../prisma/prisma.service';
+import * as fs from 'fs/promises';
+import * as path from 'path';
 
 @Injectable()
 export class ProjetoService {
@@ -30,6 +34,7 @@ export class ProjetoService {
     private readonly repo: ProjetoRepository,
     private readonly kanbanGateway: KanbanGateway,
     private readonly notificacaoService: NotificacaoService,
+    private readonly prisma: PrismaService,
     @InjectPinoLogger(ProjetoService.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -665,5 +670,326 @@ export class ProjetoService {
 
     await this.repo.softDeleteComment(commentId);
     this.logger.info({ projectId, taskId, commentId, userId }, 'Comment soft-deleted');
+  }
+
+  // ── Transfer (Copy/Cut) ──────────────────────────────────────────────────────
+
+  async transferTask(
+    sourceProjectId: string,
+    taskId: string,
+    dto: TransferTaskDto,
+    performedById: string,
+  ) {
+    // 1. Validate source task
+    const sourceTask = await this.repo.findTaskWithFullRelations(taskId, sourceProjectId, {
+      comments: dto.includeComments ?? false,
+      attachments: dto.includeAttachments ?? false,
+      history: dto.mode === 'cut' && (dto.includeHistory ?? false),
+    });
+    if (!sourceTask) {
+      throw new NotFoundException('Task não encontrada');
+    }
+
+    // 2. Validate target project
+    const targetProject = await this.repo.findProjectWithWorkspaceInfo(dto.targetProjectId);
+    if (!targetProject) {
+      throw new NotFoundException('Projeto de destino não encontrado');
+    }
+
+    if (dto.targetProjectId === sourceProjectId) {
+      throw new BadRequestException('O projeto de destino deve ser diferente do projeto de origem');
+    }
+
+    // 3. Validate user access to target project (replicates ProjetoMemberGuard logic)
+    await this.validateTargetProjectAccess(performedById, dto.targetProjectId, targetProject);
+
+    // 4. Validate target column belongs to target project
+    const targetColumn = await this.repo.findColumnById(dto.targetColumnId, dto.targetProjectId);
+    if (!targetColumn) {
+      throw new NotFoundException('Coluna de destino não encontrada no projeto de destino');
+    }
+
+    // 5. Resolve assignees
+    const validAssigneeIds: string[] = [];
+    const skippedAssigneeNames: string[] = [];
+    if (dto.includeAssignees && sourceTask.taskAssignees.length > 0) {
+      const targetMembers = await this.repo.findWorkspaceMembersByProject(dto.targetProjectId);
+      const targetMemberIds = new Set(targetMembers.map((m) => m.id));
+
+      for (const assignee of sourceTask.taskAssignees) {
+        if (targetMemberIds.has(assignee.user.id)) {
+          validAssigneeIds.push(assignee.user.id);
+        } else {
+          skippedAssigneeNames.push(assignee.user.name);
+        }
+      }
+    }
+
+    // 6. Resolve labels
+    const resolvedLabelIds: string[] = [];
+    const labelMode = dto.includeLabels ?? 'skip';
+    if (labelMode !== 'skip' && sourceTask.taskLabels.length > 0) {
+      const sourceLabels = sourceTask.taskLabels.map((tl) => tl.label);
+      const matchingLabels = await this.repo.findMatchingLabelsByName(
+        dto.targetProjectId,
+        sourceLabels.map((l) => l.name),
+      );
+      const matchMap = new Map<string, string>(
+        matchingLabels.map((l): [string, string] => [l.name, l.id]),
+      );
+
+      for (const label of sourceLabels) {
+        if (matchMap.has(label.name)) {
+          resolvedLabelIds.push(matchMap.get(label.name)!);
+        } else if (labelMode === 'create') {
+          try {
+            const created = await this.repo.createLabel({
+              projectId: dto.targetProjectId,
+              name: label.name,
+              color: label.color,
+            });
+            resolvedLabelIds.push(created.id);
+          } catch {
+            // Unique constraint race condition — try to find it again
+            const retry = await this.repo.findMatchingLabelsByName(dto.targetProjectId, [
+              label.name,
+            ]);
+            if (retry.length > 0) {
+              resolvedLabelIds.push(retry[0].id);
+            }
+          }
+        }
+      }
+    }
+
+    // 7. Prepare comments
+    const comments =
+      dto.includeComments && 'taskComments' in sourceTask
+        ? ((sourceTask as Record<string, unknown>).taskComments as {
+            userId: string;
+            content: string;
+            createdAt: Date;
+          }[])
+        : [];
+
+    // 8. Prepare history entries (only for cut + includeHistory)
+    const historyEntries =
+      dto.mode === 'cut' && dto.includeHistory && 'taskHistory' in sourceTask
+        ? ((sourceTask as Record<string, unknown>).taskHistory as {
+            userId: string;
+            field: string;
+            oldValue: string | null;
+            newValue: string | null;
+            changedAt: Date;
+          }[])
+        : [];
+
+    // 9. Prepare attachments
+    const attachments =
+      dto.includeAttachments && 'taskAttachments' in sourceTask
+        ? ((sourceTask as Record<string, unknown>).taskAttachments as {
+            uploadedById: string;
+            originalName: string;
+            storedName: string;
+            mimeType: string;
+            size: number;
+            hasThumbnail: boolean;
+          }[])
+        : [];
+
+    // 10. Determine dates
+    const includeDates = dto.includeDates ?? true;
+
+    // 11. Get source project name for history entry
+    const sourceProject = await this.repo.findProjectWithWorkspaceInfo(sourceProjectId);
+    const sourceProjectName = sourceProject?.name ?? sourceProjectId;
+    const targetProjectName = targetProject.name;
+
+    // 12. Create the transferred task
+    const newTask = await this.repo.createTransferredTask({
+      targetProjectId: dto.targetProjectId,
+      targetColumnId: dto.targetColumnId,
+      title: sourceTask.title,
+      description: sourceTask.description,
+      priority: sourceTask.priority,
+      reporterId: performedById,
+      createdById: performedById,
+      startDate: includeDates ? sourceTask.startDate : null,
+      dueDate: includeDates ? sourceTask.dueDate : null,
+      assigneeIds: validAssigneeIds,
+      labelIds: resolvedLabelIds,
+      comments,
+      historyEntries,
+      attachments,
+      transferHistoryEntry: {
+        userId: performedById,
+        field: 'transferred_from',
+        oldValue: sourceProjectName,
+        newValue: targetProjectName,
+      },
+      softDeleteSourceTaskId: dto.mode === 'cut' ? taskId : null,
+    });
+
+    // 13. Handle attachment files (outside transaction — non-critical)
+    if (attachments.length > 0) {
+      const uploadsBase = path.resolve(process.cwd(), 'uploads', 'attachments');
+      const sourceDir = path.join(uploadsBase, taskId);
+      const targetDir = path.join(uploadsBase, newTask.id);
+
+      try {
+        if (dto.mode === 'cut') {
+          await fs.rename(sourceDir, targetDir);
+        } else {
+          await fs.cp(sourceDir, targetDir, { recursive: true });
+        }
+      } catch (err) {
+        this.logger.warn(
+          { sourceTaskId: taskId, newTaskId: newTask.id, error: String(err) },
+          'Failed to copy/move attachment files',
+        );
+      }
+    }
+
+    // 14. WebSocket events
+    this.kanbanGateway.emitToProject(dto.targetProjectId, 'task:created', {
+      task: newTask,
+      columnId: dto.targetColumnId,
+    });
+
+    if (dto.mode === 'cut') {
+      this.kanbanGateway.emitToProject(sourceProjectId, 'task:deleted', {
+        taskId,
+        columnId: sourceTask.columnId,
+        actorId: performedById,
+      });
+
+      // Add history to source project for cut
+      await this.repo.createTaskHistories([
+        {
+          taskId,
+          userId: performedById,
+          field: 'transferred_to',
+          oldValue: sourceProjectName,
+          newValue: targetProjectName,
+        },
+      ]);
+    }
+
+    // 15. Notifications (non-blocking)
+    for (const assigneeId of validAssigneeIds) {
+      if (assigneeId !== performedById) {
+        this.notificacaoService
+          .notify({
+            type: NotificationType.TASK_ASSIGNED,
+            recipientId: assigneeId,
+            actorId: performedById,
+            taskId: newTask.id,
+            projectId: dto.targetProjectId,
+            title: 'Você foi atribuído a uma task',
+            body: newTask.title ?? 'Task transferida',
+          })
+          .catch(() => {
+            /* non-blocking */
+          });
+      }
+    }
+
+    this.logger.info(
+      {
+        sourceProjectId,
+        targetProjectId: dto.targetProjectId,
+        sourceTaskId: taskId,
+        newTaskId: newTask.id,
+        mode: dto.mode,
+        performedById,
+      },
+      'Task transferred',
+    );
+
+    return {
+      task: newTask,
+      skippedAssignees: skippedAssigneeNames,
+    };
+  }
+
+  async getTransferTargets(projectId: string, userId: string) {
+    const project = await this.repo.findProjectById(projectId);
+    if (!project) {
+      throw new NotFoundException('Projeto não encontrado');
+    }
+
+    const projects = await this.repo.findAccessibleProjects(userId, projectId);
+
+    // Group by workspace
+    const grouped: Record<
+      string,
+      {
+        workspaceId: string;
+        workspaceName: string;
+        projects: { id: string; name: string; columns: { id: string; name: string }[] }[];
+      }
+    > = {};
+
+    for (const p of projects) {
+      if (!grouped[p.workspaceId]) {
+        grouped[p.workspaceId] = {
+          workspaceId: p.workspaceId,
+          workspaceName: p.workspace.name,
+          projects: [],
+        };
+      }
+      grouped[p.workspaceId].projects.push({
+        id: p.id,
+        name: p.name,
+        columns: p.columns,
+      });
+    }
+
+    return Object.values(grouped);
+  }
+
+  private async validateTargetProjectAccess(
+    userId: string,
+    targetProjectId: string,
+    targetProject: { workspaceId: string; workspace: { companyId: string } },
+  ) {
+    const [workspaceMembership, companyAdminMembership] = await Promise.all([
+      this.prisma.membership.findFirst({
+        where: {
+          userId,
+          resourceType: 'workspace',
+          resourceId: targetProject.workspaceId,
+          deletedAt: null,
+        },
+        select: { role: true },
+      }),
+      this.prisma.membership.findFirst({
+        where: {
+          userId,
+          resourceType: 'company',
+          resourceId: targetProject.workspace.companyId,
+          role: 'admin',
+          deletedAt: null,
+        },
+        select: { id: true },
+      }),
+    ]);
+
+    if (!workspaceMembership && !companyAdminMembership) {
+      throw new ForbiddenException('Você não tem acesso ao projeto de destino');
+    }
+
+    // Company admin bypasses project restrictions
+    if (companyAdminMembership) return;
+
+    // Check project restriction for non-admin workspace members
+    if (workspaceMembership!.role !== 'workspace_admin') {
+      const restriction = await this.prisma.projectRestriction.findUnique({
+        where: { userId_projectId: { userId, projectId: targetProjectId } },
+      });
+      if (restriction) {
+        throw new ForbiddenException('Você não tem acesso ao projeto de destino');
+      }
+    }
   }
 }

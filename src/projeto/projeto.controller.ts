@@ -32,6 +32,7 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { MoveTaskDto } from './dto/move-task.dto';
 import { AssignTaskDto } from './dto/assign-task.dto';
+import { TransferTaskDto } from './dto/transfer-task.dto';
 import { CreateLabelDto } from './dto/create-label.dto';
 import { UpdateLabelDto } from './dto/update-label.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
@@ -222,6 +223,30 @@ export class ProjetoController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.projetoService.assignTask(projectId, taskId, dto, user.id);
+  }
+
+  // ── Transfer ──────────────────────────────────────────────────────────────────
+
+  @Get('transfer-targets')
+  @ApiOperation({ summary: 'Lista projetos disponíveis para transferência de task' })
+  @ApiResponse({ status: 200, description: 'Lista de projetos agrupados por workspace' })
+  getTransferTargets(@Param('projectId') projectId: string, @CurrentUser() user: AuthUser) {
+    return this.projetoService.getTransferTargets(projectId, user.id);
+  }
+
+  @Post('tasks/:taskId/transfer')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Copiar ou recortar task para outro projeto' })
+  @ApiResponse({ status: 200, description: 'Task transferida com sucesso' })
+  @ApiResponse({ status: 403, description: 'Sem acesso ao projeto de destino' })
+  @ApiResponse({ status: 404, description: 'Task, projeto ou coluna não encontrados' })
+  transferTask(
+    @Param('projectId') projectId: string,
+    @Param('taskId') taskId: string,
+    @Body() dto: TransferTaskDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.projetoService.transferTask(projectId, taskId, dto, user.id);
   }
 
   // ── Labels ────────────────────────────────────────────────────────────────────

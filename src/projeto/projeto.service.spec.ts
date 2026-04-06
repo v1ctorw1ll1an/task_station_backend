@@ -82,7 +82,14 @@ function makeService(repo: jest.Mocked<ProjetoRepository>) {
   };
   const kanbanGateway = { emitToProject: jest.fn() } as never;
   const notificacaoService = { notificar: jest.fn() } as never;
-  const service = new ProjetoService(repo, kanbanGateway, notificacaoService, logger as never);
+  const prismaService = {} as never;
+  const service = new ProjetoService(
+    repo,
+    kanbanGateway,
+    notificacaoService,
+    prismaService,
+    logger as never,
+  );
   return service;
 }
 

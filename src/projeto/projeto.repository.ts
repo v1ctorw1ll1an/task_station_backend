@@ -631,4 +631,301 @@ export class ProjetoRepository {
       where: { taskId, deletedAt: null, mimeType: { startsWith: mimePrefix } },
     });
   }
+
+  // ── Transfer ───────────────────────────────────────────────────────────────
+
+  findTaskWithFullRelations(
+    taskId: string,
+    projectId: string,
+    includes: { comments?: boolean; attachments?: boolean; history?: boolean },
+  ) {
+    return this.prisma.task.findFirst({
+      where: { id: taskId, projectId, deletedAt: null },
+      select: {
+        ...TASK_SELECT,
+        description: true,
+        reporterId: true,
+        createdById: true,
+        ...(includes.comments
+          ? {
+              taskComments: {
+                where: { deletedAt: null },
+                orderBy: { createdAt: 'asc' as const },
+                select: { id: true, userId: true, content: true, createdAt: true },
+              },
+            }
+          : {}),
+        ...(includes.attachments
+          ? {
+              taskAttachments: {
+                where: { deletedAt: null },
+                select: {
+                  id: true,
+                  uploadedById: true,
+                  originalName: true,
+                  storedName: true,
+                  mimeType: true,
+                  size: true,
+                  hasThumbnail: true,
+                },
+              },
+            }
+          : {}),
+        ...(includes.history
+          ? {
+              taskHistory: {
+                orderBy: { changedAt: 'asc' as const },
+                select: {
+                  id: true,
+                  userId: true,
+                  field: true,
+                  oldValue: true,
+                  newValue: true,
+                  changedAt: true,
+                },
+              },
+            }
+          : {}),
+      },
+    });
+  }
+
+  findProjectWithWorkspaceInfo(projectId: string) {
+    return this.prisma.project.findFirst({
+      where: { id: projectId, deletedAt: null, isActive: true },
+      select: {
+        id: true,
+        name: true,
+        workspaceId: true,
+        taskCounter: true,
+        workspace: { select: { id: true, companyId: true, name: true } },
+      },
+    });
+  }
+
+  findMatchingLabelsByName(projectId: string, names: string[]) {
+    if (names.length === 0)
+      return Promise.resolve([] as Prisma.LabelGetPayload<{ select: typeof LABEL_SELECT }>[]);
+    return this.prisma.label.findMany({
+      where: { projectId, name: { in: names }, deletedAt: null },
+      select: LABEL_SELECT,
+    });
+  }
+
+  async createTransferredTask(data: {
+    targetProjectId: string;
+    targetColumnId: string;
+    title: string;
+    description: string | null;
+    priority: TaskPriority;
+    reporterId: string;
+    createdById: string;
+    startDate: Date | null;
+    dueDate: Date | null;
+    assigneeIds: string[];
+    labelIds: string[];
+    comments: { userId: string; content: string; createdAt: Date }[];
+    historyEntries: {
+      userId: string;
+      field: string;
+      oldValue: string | null;
+      newValue: string | null;
+      changedAt: Date;
+    }[];
+    attachments: {
+      uploadedById: string;
+      originalName: string;
+      storedName: string;
+      mimeType: string;
+      size: number;
+      hasThumbnail: boolean;
+    }[];
+    transferHistoryEntry: {
+      userId: string;
+      field: string;
+      oldValue: string | null;
+      newValue: string | null;
+    };
+    softDeleteSourceTaskId: string | null;
+  }): Promise<Prisma.TaskGetPayload<{ select: typeof TASK_SELECT }>> {
+    return this.prisma.$transaction(async (tx) => {
+      const updatedProject = await tx.project.update({
+        where: { id: data.targetProjectId },
+        data: { taskCounter: { increment: 1 } },
+        select: { taskCounter: true },
+      });
+
+      const taskNumber = updatedProject.taskCounter;
+
+      const lastTask = await tx.task.findFirst({
+        where: { columnId: data.targetColumnId, deletedAt: null },
+        orderBy: { order: 'desc' },
+        select: { order: true },
+      });
+
+      const order = (lastTask?.order ?? 0) + 1000;
+
+      const newTask = await tx.task.create({
+        data: {
+          projectId: data.targetProjectId,
+          columnId: data.targetColumnId,
+          taskNumber,
+          title: data.title,
+          description: data.description,
+          priority: data.priority,
+          order,
+          reporterId: data.reporterId,
+          createdById: data.createdById,
+          startDate: data.startDate,
+          dueDate: data.dueDate,
+          ...(data.assigneeIds.length > 0
+            ? { taskAssignees: { create: data.assigneeIds.map((userId) => ({ userId })) } }
+            : {}),
+          ...(data.labelIds.length > 0
+            ? { taskLabels: { create: data.labelIds.map((labelId) => ({ labelId })) } }
+            : {}),
+        },
+        select: TASK_SELECT,
+      });
+
+      // Create comments
+      if (data.comments.length > 0) {
+        await tx.taskComment.createMany({
+          data: data.comments.map((c) => ({
+            taskId: newTask.id,
+            userId: c.userId,
+            content: c.content,
+            createdAt: c.createdAt,
+          })),
+        });
+      }
+
+      // Create history entries (carried over from source)
+      if (data.historyEntries.length > 0) {
+        await tx.taskHistory.createMany({
+          data: data.historyEntries.map((h) => ({
+            taskId: newTask.id,
+            userId: h.userId,
+            field: h.field,
+            oldValue: h.oldValue,
+            newValue: h.newValue,
+            changedAt: h.changedAt,
+          })),
+        });
+      }
+
+      // Create transfer history entry
+      await tx.taskHistory.create({
+        data: {
+          taskId: newTask.id,
+          userId: data.transferHistoryEntry.userId,
+          field: data.transferHistoryEntry.field,
+          oldValue: data.transferHistoryEntry.oldValue,
+          newValue: data.transferHistoryEntry.newValue,
+        },
+      });
+
+      // Create attachments records
+      if (data.attachments.length > 0) {
+        await tx.taskAttachment.createMany({
+          data: data.attachments.map((a) => ({
+            taskId: newTask.id,
+            uploadedById: a.uploadedById,
+            originalName: a.originalName,
+            storedName: a.storedName,
+            mimeType: a.mimeType,
+            size: a.size,
+            hasThumbnail: a.hasThumbnail,
+          })),
+        });
+      }
+
+      // Soft-delete source task if cut mode
+      if (data.softDeleteSourceTaskId) {
+        await tx.task.update({
+          where: { id: data.softDeleteSourceTaskId },
+          data: { deletedAt: new Date() },
+        });
+      }
+
+      return newTask;
+    });
+  }
+
+  async findAccessibleProjects(userId: string, excludeProjectId: string) {
+    // Find all workspace memberships for this user
+    const workspaceMemberships = await this.prisma.membership.findMany({
+      where: { userId, resourceType: 'workspace', deletedAt: null },
+      select: { resourceId: true, role: true },
+    });
+
+    // Find all company admin memberships
+    const companyAdminMemberships = await this.prisma.membership.findMany({
+      where: { userId, resourceType: 'company', role: 'admin', deletedAt: null },
+      select: { resourceId: true },
+    });
+
+    const companyAdminIds = companyAdminMemberships.map((m) => m.resourceId);
+
+    // Find workspaces from company admin memberships
+    const companyWorkspaces =
+      companyAdminIds.length > 0
+        ? await this.prisma.workspace.findMany({
+            where: { companyId: { in: companyAdminIds }, deletedAt: null, isActive: true },
+            select: { id: true },
+          })
+        : [];
+
+    const allWorkspaceIds = [
+      ...new Set([
+        ...workspaceMemberships.map((m) => m.resourceId),
+        ...companyWorkspaces.map((w) => w.id),
+      ]),
+    ];
+
+    if (allWorkspaceIds.length === 0) return [];
+
+    // Find workspace_admin workspace IDs (bypass ProjectRestriction)
+    const adminWorkspaceIds = new Set([
+      ...workspaceMemberships.filter((m) => m.role === 'workspace_admin').map((m) => m.resourceId),
+      ...companyWorkspaces.map((w) => w.id),
+    ]);
+
+    // Get all projects in those workspaces
+    const projects = await this.prisma.project.findMany({
+      where: {
+        workspaceId: { in: allWorkspaceIds },
+        id: { not: excludeProjectId },
+        deletedAt: null,
+        isActive: true,
+      },
+      select: {
+        id: true,
+        name: true,
+        workspaceId: true,
+        workspace: { select: { name: true } },
+        columns: {
+          where: { deletedAt: null },
+          orderBy: { order: 'asc' },
+          select: { id: true, name: true },
+        },
+      },
+      orderBy: [{ workspace: { name: 'asc' } }, { name: 'asc' }],
+    });
+
+    // Filter out projects with restrictions (for non-admin workspaces)
+    const restrictions = await this.prisma.projectRestriction.findMany({
+      where: {
+        userId,
+        projectId: { in: projects.map((p) => p.id) },
+      },
+      select: { projectId: true },
+    });
+    const restrictedProjectIds = new Set(restrictions.map((r) => r.projectId));
+
+    return projects.filter((p) => {
+      if (adminWorkspaceIds.has(p.workspaceId)) return true;
+      return !restrictedProjectIds.has(p.id);
+    });
+  }
 }
