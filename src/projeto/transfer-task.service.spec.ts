@@ -243,6 +243,7 @@ function setupValidTransfer(
     color: null,
     order: 1000,
     projectId: 'project-target',
+    isDone: false,
   });
   repo.findWorkspaceMembersByProject.mockResolvedValue([
     { id: 'user-a', name: 'Alice', email: 'alice@test.com', photoUrl: null },
@@ -362,6 +363,7 @@ describe('ProjetoService — transferTask', () => {
         color: null,
         order: 1000,
         projectId: 'project-target',
+        isDone: false,
       });
       repo.findWorkspaceMembersByProject.mockResolvedValue([]);
       repo.createTransferredTask.mockResolvedValue(makeNewTask());

@@ -37,6 +37,7 @@ const COLUMN_SELECT = {
   name: true,
   color: true,
   order: true,
+  isDone: true,
   projectId: true,
 } as const;
 

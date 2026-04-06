@@ -80,7 +80,7 @@ export class MeRepository {
     return {
       deletedAt: null,
       taskAssignees: { some: { userId } },
-      column: { deletedAt: null },
+      column: { deletedAt: null, isDone: false },
       project: {
         deletedAt: null,
         isActive: true,

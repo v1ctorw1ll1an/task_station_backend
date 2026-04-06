@@ -158,6 +158,7 @@ model Column {
   name      String
   order     Int
   color     String?
+  isDone    Boolean   @default(false) @map("is_done")
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt     @map("updated_at")
   deletedAt DateTime?                @map("deleted_at")

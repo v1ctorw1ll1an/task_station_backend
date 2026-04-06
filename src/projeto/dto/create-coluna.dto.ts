@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class CreateColunaDto {
   @IsString()
@@ -10,4 +10,8 @@ export class CreateColunaDto {
   @IsString()
   @MaxLength(7)
   color?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isDone?: boolean;
 }

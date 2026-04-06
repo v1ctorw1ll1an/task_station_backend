@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MaxLength, MinLength, ValidateIf } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, MaxLength, MinLength, ValidateIf } from 'class-validator';
 import { Transform } from 'class-transformer';
 
 export class UpdateColunaDto {
@@ -14,4 +14,8 @@ export class UpdateColunaDto {
   @IsString()
   @MaxLength(7)
   color?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  isDone?: boolean;
 }

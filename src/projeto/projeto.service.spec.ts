@@ -21,6 +21,7 @@ function makeColumn(overrides: Record<string, unknown> = {}) {
     color: null,
     order: 1000,
     projectId: 'project-1',
+    isDone: false,
     ...overrides,
   };
 }
