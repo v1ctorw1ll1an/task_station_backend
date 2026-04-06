@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": {
+    "email-best-practices": {
+      "source": "resend/email-best-practices",
+      "sourceType": "github",
+      "computedHash": "7e6c8d495e66e88a20dc45d17d24b445d6c5c9072855c78d8800fff994bc813f"
+    },
+    "nestjs-best-practices": {
+      "source": "kadajett/agent-nestjs-skills",
+      "sourceType": "github",
+      "computedHash": "1b6f82e889d19d305e38e35594de08eca0242321f353cafa4cf5e61dd3aa1a73"
+    }
+  }
+}
