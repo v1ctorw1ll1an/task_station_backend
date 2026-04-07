@@ -7,7 +7,11 @@ export type KanbanEvent =
   | 'column:created'
   | 'column:updated'
   | 'column:reordered'
-  | 'column:deleted';
+  | 'column:deleted'
+  | 'taskSession:started'
+  | 'taskSession:paused'
+  | 'taskSession:resumed'
+  | 'taskSession:stopped';
 
 export interface KanbanTaskSnapshot {
   id: string;
@@ -81,6 +85,59 @@ export interface ColumnDeletedPayload {
   columnId: string;
   targetColumnId: string | null;
   movedTaskIds: string[];
+}
+
+// ── Task Session payloads ─────────────────────────────────────────────────────
+
+export interface TaskSessionStartedPayload {
+  sessionId: string;
+  taskId: string;
+  taskTitle: string;
+  taskNumber: number | null;
+  projectId: string;
+  projectName: string;
+  workspaceId: string;
+  workspaceName: string;
+  companyId: string;
+  userId: string;
+  userName: string;
+  userPhotoUrl: string | null;
+  status: 'running';
+  resumedAt: string;
+  totalSeconds: number;
+}
+
+export interface TaskSessionPausedPayload {
+  sessionId: string;
+  taskId: string;
+  projectId: string;
+  workspaceId: string;
+  companyId: string;
+  userId: string;
+  totalSeconds: number;
+  status: 'paused';
+}
+
+export interface TaskSessionResumedPayload {
+  sessionId: string;
+  taskId: string;
+  projectId: string;
+  workspaceId: string;
+  companyId: string;
+  userId: string;
+  resumedAt: string;
+  status: 'running';
+}
+
+export interface TaskSessionStoppedPayload {
+  sessionId: string;
+  taskId: string;
+  projectId: string;
+  workspaceId: string;
+  companyId: string;
+  userId: string;
+  totalSeconds: number;
+  status: 'stopped';
 }
 
 // Tipo discriminado para uso interno no service

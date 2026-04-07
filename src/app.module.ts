@@ -15,6 +15,7 @@ import { ProjetoModule } from './projeto/projeto.module';
 import { SuperadminModule } from './superadmin/superadmin.module';
 import { NotificacaoModule } from './notificacao/notificacao.module';
 import { UploadModule } from './upload/upload.module';
+import { TaskSessionModule } from './task-session/task-session.module';
 
 @Module({
   imports: [
@@ -77,6 +78,7 @@ import { UploadModule } from './upload/upload.module';
     ProjetoModule,
     NotificacaoModule,
     UploadModule,
+    TaskSessionModule,
   ],
   providers: [
     {

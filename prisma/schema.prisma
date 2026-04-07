@@ -72,6 +72,7 @@ model User {
   reportedTasks           Task[]               @relation("TaskReporter")
   taskAssignments         TaskAssignee[]
   createdTasks            Task[]               @relation("TaskCreatedBy")
+  taskSessions            TaskSession[]
   memberships             Membership[]
   projectRestrictions     ProjectRestriction[]
   passwordResetTokens     PasswordResetToken[]
@@ -197,6 +198,7 @@ model Task {
   taskComments     TaskComment[]
   taskAttachments  TaskAttachment[]
   notifications    Notification[]
+  taskSessions     TaskSession[]
 
   @@unique([projectId, taskNumber])
   @@index([columnId, order])
@@ -396,6 +398,25 @@ model UserWorkspaceOrder {
   @@id([userId, workspaceId])
   @@index([userId, companyId])
   @@map("user_workspace_orders")
+}
+
+model TaskSession {
+  id           String    @id @default(uuid())
+  taskId       String    @map("task_id")
+  userId       String    @map("user_id")
+  status       String    // "running" | "paused" | "stopped"
+  startedAt    DateTime  @default(now()) @map("started_at") @db.Timestamptz
+  resumedAt    DateTime? @map("resumed_at") @db.Timestamptz
+  pausedAt     DateTime? @map("paused_at") @db.Timestamptz
+  stoppedAt    DateTime? @map("stopped_at") @db.Timestamptz
+  totalSeconds Int       @default(0) @map("total_seconds")
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@index([userId, status])
+  @@map("task_sessions")
 }
 
 model UserProjectOrder {
