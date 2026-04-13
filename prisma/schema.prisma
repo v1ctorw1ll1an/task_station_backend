@@ -84,6 +84,7 @@ model User {
   notifPreference         NotificationPreference?
   workspaceOrders         UserWorkspaceOrder[]
   projectOrders           UserProjectOrder[]
+  taskChecklists          TaskChecklist[]
 
   @@index([deletedAt])
   @@map("users")
@@ -197,6 +198,7 @@ model Task {
   taskHistory      TaskHistory[]
   taskComments     TaskComment[]
   taskAttachments  TaskAttachment[]
+  taskChecklists   TaskChecklist[]
   notifications    Notification[]
   taskSessions     TaskSession[]
 
@@ -344,6 +346,24 @@ model TaskAttachment {
 
   @@index([taskId, deletedAt])
   @@map("task_attachments")
+}
+
+model TaskChecklist {
+  id          String    @id @default(uuid())
+  taskId      String    @map("task_id")
+  title       String
+  completed   Boolean   @default(false)
+  order       Int
+  createdById String    @map("created_by")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt      @map("updated_at")
+  deletedAt   DateTime?                 @map("deleted_at")
+
+  task      Task @relation(fields: [taskId],      references: [id], onDelete: Cascade)
+  createdBy User @relation(fields: [createdById], references: [id])
+
+  @@index([taskId, deletedAt])
+  @@map("task_checklists")
 }
 
 model Notification {

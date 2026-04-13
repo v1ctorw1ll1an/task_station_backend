@@ -37,6 +37,8 @@ import { CreateLabelDto } from './dto/create-label.dto';
 import { UpdateLabelDto } from './dto/update-label.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
+import { CreateChecklistDto } from './dto/create-checklist.dto';
+import { UpdateChecklistDto } from './dto/update-checklist.dto';
 
 @ApiTags('projetos')
 @ApiBearerAuth()
@@ -298,6 +300,52 @@ export class ProjetoController {
     @CurrentUser() user: AuthUser,
   ) {
     await this.projetoService.deleteLabel(projectId, labelId, user.id);
+  }
+
+  // ── Checklists ───────────────────────────────────────────────────────────────
+
+  @Get('tasks/:taskId/checklists')
+  @ApiOperation({ summary: 'Listar itens do checklist' })
+  @ApiResponse({ status: 200, description: 'Itens retornados' })
+  listChecklists(@Param('projectId') projectId: string, @Param('taskId') taskId: string) {
+    return this.projetoService.listChecklists(projectId, taskId);
+  }
+
+  @Post('tasks/:taskId/checklists')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Criar item no checklist' })
+  @ApiResponse({ status: 201, description: 'Item criado' })
+  createChecklist(
+    @Param('projectId') projectId: string,
+    @Param('taskId') taskId: string,
+    @Body() dto: CreateChecklistDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.projetoService.createChecklist(projectId, taskId, dto, user.id);
+  }
+
+  @Patch('tasks/:taskId/checklists/:checklistId')
+  @ApiOperation({ summary: 'Atualizar item do checklist' })
+  @ApiResponse({ status: 200, description: 'Item atualizado' })
+  updateChecklist(
+    @Param('projectId') projectId: string,
+    @Param('taskId') taskId: string,
+    @Param('checklistId') checklistId: string,
+    @Body() dto: UpdateChecklistDto,
+  ) {
+    return this.projetoService.updateChecklist(projectId, taskId, checklistId, dto);
+  }
+
+  @Delete('tasks/:taskId/checklists/:checklistId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Remover item do checklist' })
+  @ApiResponse({ status: 204, description: 'Item removido' })
+  async deleteChecklist(
+    @Param('projectId') projectId: string,
+    @Param('taskId') taskId: string,
+    @Param('checklistId') checklistId: string,
+  ) {
+    await this.projetoService.deleteChecklist(projectId, taskId, checklistId);
   }
 
   // ── Comentários ───────────────────────────────────────────────────────────────

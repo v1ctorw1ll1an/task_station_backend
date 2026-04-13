@@ -532,6 +532,58 @@ export class ProjetoRepository {
     });
   }
 
+  // ── Checklists ────────────────────────────────────────────────────────────────
+
+  private checklistSelect = {
+    id: true,
+    title: true,
+    completed: true,
+    order: true,
+    createdById: true,
+    createdAt: true,
+  } as const;
+
+  findChecklistsByTask(taskId: string) {
+    return this.prisma.taskChecklist.findMany({
+      where: { taskId, deletedAt: null },
+      select: this.checklistSelect,
+      orderBy: { order: 'asc' },
+    });
+  }
+
+  countChecklistsByTask(taskId: string) {
+    return this.prisma.taskChecklist.count({ where: { taskId, deletedAt: null } });
+  }
+
+  findChecklistById(checklistId: string, taskId: string) {
+    return this.prisma.taskChecklist.findFirst({
+      where: { id: checklistId, taskId, deletedAt: null },
+      select: { id: true, taskId: true, createdById: true, title: true, completed: true },
+    });
+  }
+
+  createChecklist(taskId: string, userId: string, title: string, order: number) {
+    return this.prisma.taskChecklist.create({
+      data: { taskId, createdById: userId, title, order, completed: false },
+      select: this.checklistSelect,
+    });
+  }
+
+  updateChecklist(checklistId: string, dto: { title?: string; completed?: boolean }) {
+    return this.prisma.taskChecklist.update({
+      where: { id: checklistId },
+      data: dto,
+      select: this.checklistSelect,
+    });
+  }
+
+  softDeleteChecklist(checklistId: string) {
+    return this.prisma.taskChecklist.update({
+      where: { id: checklistId },
+      data: { deletedAt: new Date() },
+    });
+  }
+
   // ── Task History ──────────────────────────────────────────────────────────────
 
   createTaskHistories(

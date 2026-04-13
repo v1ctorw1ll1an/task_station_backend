@@ -23,6 +23,8 @@ import { CreateLabelDto } from './dto/create-label.dto';
 import { UpdateLabelDto } from './dto/update-label.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
+import { CreateChecklistDto } from './dto/create-checklist.dto';
+import { UpdateChecklistDto } from './dto/update-checklist.dto';
 import { TransferTaskDto } from './dto/transfer-task.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import * as fs from 'fs/promises';
@@ -546,6 +548,57 @@ export class ProjetoService {
 
     await this.repo.softDeleteLabel(labelId);
     this.logger.info({ projectId, labelId, performedById }, 'Label soft-deleted');
+  }
+
+  // ── Checklists ────────────────────────────────────────────────────────────────
+
+  async listChecklists(projectId: string, taskId: string) {
+    const task = await this.repo.findTaskById(taskId, projectId);
+    if (!task) throw new NotFoundException('Task não encontrada');
+    return this.repo.findChecklistsByTask(taskId);
+  }
+
+  async createChecklist(
+    projectId: string,
+    taskId: string,
+    dto: CreateChecklistDto,
+    userId: string,
+  ) {
+    const task = await this.repo.findTaskById(taskId, projectId);
+    if (!task) throw new NotFoundException('Task não encontrada');
+
+    const count = await this.repo.countChecklistsByTask(taskId);
+    const item = await this.repo.createChecklist(taskId, userId, dto.title, count + 1);
+    this.logger.info({ projectId, taskId, checklistId: item.id, userId }, 'Checklist item created');
+    return item;
+  }
+
+  async updateChecklist(
+    projectId: string,
+    taskId: string,
+    checklistId: string,
+    dto: UpdateChecklistDto,
+  ) {
+    const task = await this.repo.findTaskById(taskId, projectId);
+    if (!task) throw new NotFoundException('Task não encontrada');
+
+    const item = await this.repo.findChecklistById(checklistId, taskId);
+    if (!item) throw new NotFoundException('Item não encontrado');
+
+    const updated = await this.repo.updateChecklist(checklistId, dto);
+    this.logger.info({ projectId, taskId, checklistId }, 'Checklist item updated');
+    return updated;
+  }
+
+  async deleteChecklist(projectId: string, taskId: string, checklistId: string) {
+    const task = await this.repo.findTaskById(taskId, projectId);
+    if (!task) throw new NotFoundException('Task não encontrada');
+
+    const item = await this.repo.findChecklistById(checklistId, taskId);
+    if (!item) throw new NotFoundException('Item não encontrado');
+
+    await this.repo.softDeleteChecklist(checklistId);
+    this.logger.info({ projectId, taskId, checklistId }, 'Checklist item soft-deleted');
   }
 
   // ── Comentários ───────────────────────────────────────────────────────────────
