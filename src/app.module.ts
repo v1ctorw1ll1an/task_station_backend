@@ -16,6 +16,7 @@ import { SuperadminModule } from './superadmin/superadmin.module';
 import { NotificacaoModule } from './notificacao/notificacao.module';
 import { UploadModule } from './upload/upload.module';
 import { TaskSessionModule } from './task-session/task-session.module';
+import { StickyNotesModule } from './sticky-notes/sticky-notes.module';
 
 @Module({
   imports: [
@@ -79,6 +80,7 @@ import { TaskSessionModule } from './task-session/task-session.module';
     NotificacaoModule,
     UploadModule,
     TaskSessionModule,
+    StickyNotesModule,
   ],
   providers: [
     {

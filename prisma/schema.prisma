@@ -52,6 +52,17 @@ enum NotificationType {
   @@map("notification_type")
 }
 
+enum StickyNoteColor {
+  yellow
+  blue
+  green
+  pink
+  purple
+  gray
+
+  @@map("sticky_note_color")
+}
+
 model User {
   id                 String    @id @default(uuid())
   email              String    @unique
@@ -85,6 +96,7 @@ model User {
   workspaceOrders         UserWorkspaceOrder[]
   projectOrders           UserProjectOrder[]
   taskChecklists          TaskChecklist[]
+  stickyNotes             StickyNote[]
 
   @@index([deletedAt])
   @@map("users")
@@ -201,6 +213,7 @@ model Task {
   taskChecklists   TaskChecklist[]
   notifications    Notification[]
   taskSessions     TaskSession[]
+  stickyNoteLinks  StickyNoteTaskLink[]
 
   @@unique([projectId, taskNumber])
   @@index([columnId, order])
@@ -452,4 +465,37 @@ model UserProjectOrder {
   @@id([userId, projectId])
   @@index([userId, workspaceId])
   @@map("user_project_orders")
+}
+
+model StickyNote {
+  id        String          @id @default(uuid())
+  userId    String          @map("user_id")
+  content   String          @default("") @db.VarChar(255)
+  color     StickyNoteColor @default(yellow)
+  x         Int             @default(0)
+  y         Int             @default(0)
+  visible   Boolean         @default(true)
+  minimized Boolean         @default(false)
+  zIndex    Int             @default(1000) @map("z_index")
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt      @map("updated_at")
+  deletedAt DateTime?                       @map("deleted_at")
+
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  taskLinks StickyNoteTaskLink[]
+
+  @@index([userId, deletedAt])
+  @@map("sticky_notes")
+}
+
+model StickyNoteTaskLink {
+  noteId String @map("note_id")
+  taskId String @map("task_id")
+
+  note StickyNote @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  task Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@id([noteId, taskId])
+  @@index([taskId])
+  @@map("sticky_note_task_links")
 }
