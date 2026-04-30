@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, HttpAdapterHost } from '@nestjs/core';
+import { ScheduleModule } from '@nestjs/schedule';
 import { Logger, LoggerModule } from 'nestjs-pino';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
@@ -17,6 +18,7 @@ import { NotificacaoModule } from './notificacao/notificacao.module';
 import { UploadModule } from './upload/upload.module';
 import { TaskSessionModule } from './task-session/task-session.module';
 import { StickyNotesModule } from './sticky-notes/sticky-notes.module';
+import { EventoModule } from './evento/evento.module';
 
 @Module({
   imports: [
@@ -68,6 +70,7 @@ import { StickyNotesModule } from './sticky-notes/sticky-notes.module';
         };
       },
     }),
+    ScheduleModule.forRoot(),
     PrismaModule,
     MailerModule,
     HealthModule,
@@ -81,6 +84,7 @@ import { StickyNotesModule } from './sticky-notes/sticky-notes.module';
     UploadModule,
     TaskSessionModule,
     StickyNotesModule,
+    EventoModule,
   ],
   providers: [
     {

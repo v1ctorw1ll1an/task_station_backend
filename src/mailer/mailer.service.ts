@@ -78,6 +78,147 @@ export class MailerService {
     this.logger.info({ to }, 'Welcome email sent via Resend');
   }
 
+  async sendEventNotificationEmail(params: {
+    to: string;
+    kind: 'created' | 'updated' | 'cancelled';
+    title: string;
+    startsAt: Date;
+    endsAt: Date;
+    location: string | null;
+    description: string | null;
+    timezone: string;
+    organizerName?: string | null;
+  }): Promise<void> {
+    const { to, kind, title, startsAt, endsAt, location, description, timezone, organizerName } =
+      params;
+
+    const fmt = (d: Date) =>
+      new Intl.DateTimeFormat('pt-BR', {
+        dateStyle: 'full',
+        timeStyle: 'short',
+        timeZone: timezone,
+      }).format(d);
+
+    const verb =
+      kind === 'created'
+        ? 'Novo evento'
+        : kind === 'updated'
+          ? 'Evento atualizado'
+          : 'Evento cancelado';
+    const subject = `${verb}: ${title}`;
+    const intro =
+      kind === 'created'
+        ? `Você foi convidado para um novo evento: <strong>${title}</strong>.`
+        : kind === 'updated'
+          ? `O evento <strong>${title}</strong> foi atualizado.`
+          : `O evento <strong>${title}</strong> foi cancelado.`;
+
+    const html = `
+      <p>${intro}</p>
+      ${
+        kind !== 'cancelled'
+          ? `
+        <p><strong>Início:</strong> ${fmt(startsAt)}<br/>
+           <strong>Fim:</strong> ${fmt(endsAt)}</p>
+        ${location ? `<p><strong>Local:</strong> ${location}</p>` : ''}
+        ${description ? `<p>${description.replace(/\n/g, '<br/>')}</p>` : ''}
+      `
+          : ''
+      }
+      ${organizerName ? `<p style="color:#666;font-size:12px">Organizador: ${organizerName}</p>` : ''}
+    `;
+
+    const text =
+      `${verb}: ${title}\n\n` +
+      (kind !== 'cancelled'
+        ? `Início: ${fmt(startsAt)}\nFim: ${fmt(endsAt)}\n` +
+          (location ? `Local: ${location}\n` : '') +
+          (description ? `\n${description}\n` : '')
+        : '') +
+      (organizerName ? `\nOrganizador: ${organizerName}\n` : '');
+
+    const { error } = await this.resend.emails.send({
+      from: this.from,
+      to,
+      subject,
+      html,
+      text,
+    });
+
+    if (error) {
+      this.logger.error(
+        { to, kind, errorCode: error.name, errorMessage: error.message },
+        'Failed to send event notification email',
+      );
+      // Não throwa — notificações não devem quebrar a mutação principal
+      return;
+    }
+
+    this.logger.info({ to, kind, title }, 'Event notification email sent via Resend');
+  }
+
+  async sendEventReminderEmail(params: {
+    to: string;
+    title: string;
+    startsAt: Date;
+    endsAt: Date;
+    location: string | null;
+    description: string | null;
+    minutesBefore: number;
+    timezone: string;
+  }): Promise<void> {
+    const { to, title, startsAt, endsAt, location, description, minutesBefore, timezone } = params;
+
+    const fmt = (d: Date) =>
+      new Intl.DateTimeFormat('pt-BR', {
+        dateStyle: 'full',
+        timeStyle: 'short',
+        timeZone: timezone,
+      }).format(d);
+
+    const minutesLabel =
+      minutesBefore >= 1440
+        ? `${Math.round(minutesBefore / 1440)} dia(s)`
+        : minutesBefore >= 60
+          ? `${Math.round(minutesBefore / 60)} hora(s)`
+          : `${minutesBefore} minutos`;
+
+    const subject = `Lembrete: ${title} (em ${minutesLabel})`;
+
+    const html = `
+      <p>Olá!</p>
+      <p>Este é um lembrete do seu evento <strong>${title}</strong>, que começa em <strong>${minutesLabel}</strong>.</p>
+      <p><strong>Início:</strong> ${fmt(startsAt)}<br/>
+         <strong>Fim:</strong> ${fmt(endsAt)}</p>
+      ${location ? `<p><strong>Local:</strong> ${location}</p>` : ''}
+      ${description ? `<p>${description.replace(/\n/g, '<br/>')}</p>` : ''}
+    `;
+
+    const text =
+      `Lembrete: ${title} (em ${minutesLabel})\n\n` +
+      `Início: ${fmt(startsAt)}\nFim: ${fmt(endsAt)}\n` +
+      (location ? `Local: ${location}\n` : '') +
+      (description ? `\n${description}\n` : '');
+
+    const { error } = await this.resend.emails.send({
+      from: this.from,
+      to,
+      subject,
+      html,
+      text,
+    });
+
+    if (error) {
+      this.logger.error(
+        { to, errorCode: error.name, errorMessage: error.message },
+        'Failed to send event reminder email',
+      );
+      throw new InternalServerErrorException('Erro ao enviar lembrete');
+    }
+
+    this.logger.info({ to, title, minutesBefore }, 'Event reminder email sent via Resend');
+  }
+
   async sendFirstAccessEmail(to: string, name: string, magicLink: string): Promise<void> {
     const { error } = await this.resend.emails.send({
       from: this.from,

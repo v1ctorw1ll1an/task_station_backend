@@ -63,40 +63,65 @@ enum StickyNoteColor {
   @@map("sticky_note_color")
 }
 
-model User {
-  id                 String    @id @default(uuid())
-  email              String    @unique
-  passwordHash       String    @map("password_hash")
-  name               String
-  phone              String?
-  photoUrl           String?   @map("photo_url")
-  isSuperuser        Boolean   @default(false) @map("is_superuser")
-  mustResetPassword  Boolean   @default(true)  @map("must_reset_password")
-  isActive           Boolean   @default(true)  @map("is_active")
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime  @updatedAt      @map("updated_at")
-  deletedAt          DateTime?                 @map("deleted_at")
+enum EventVisibility {
+  private
+  shared
 
-  createdCompanies        Company[]            @relation("CompanyCreatedBy")
-  createdWorkspaces       Workspace[]          @relation("WorkspaceCreatedBy")
-  createdProjects         Project[]            @relation("ProjectCreatedBy")
-  reportedTasks           Task[]               @relation("TaskReporter")
-  taskAssignments         TaskAssignee[]
-  createdTasks            Task[]               @relation("TaskCreatedBy")
-  taskSessions            TaskSession[]
-  memberships             Membership[]
-  projectRestrictions     ProjectRestriction[]
-  passwordResetTokens     PasswordResetToken[]
-  taskHistories           TaskHistory[]
-  taskComments            TaskComment[]
-  taskAttachments         TaskAttachment[]
-  notifications           Notification[]   @relation("UserNotifications")
-  triggeredNotifs         Notification[]   @relation("NotificationActors")
-  notifPreference         NotificationPreference?
-  workspaceOrders         UserWorkspaceOrder[]
-  projectOrders           UserProjectOrder[]
-  taskChecklists          TaskChecklist[]
-  stickyNotes             StickyNote[]
+  @@map("event_visibility")
+}
+
+enum AttendeeStatus {
+  invited
+  accepted
+  declined
+  tentative
+
+  @@map("attendee_status")
+}
+
+enum ReminderMethod {
+  notification
+  email
+
+  @@map("reminder_method")
+}
+
+model User {
+  id                String    @id @default(uuid())
+  email             String    @unique
+  passwordHash      String    @map("password_hash")
+  name              String
+  phone             String?
+  photoUrl          String?   @map("photo_url")
+  isSuperuser       Boolean   @default(false) @map("is_superuser")
+  mustResetPassword Boolean   @default(true) @map("must_reset_password")
+  isActive          Boolean   @default(true) @map("is_active")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+  deletedAt         DateTime? @map("deleted_at")
+
+  createdCompanies    Company[]               @relation("CompanyCreatedBy")
+  createdWorkspaces   Workspace[]             @relation("WorkspaceCreatedBy")
+  createdProjects     Project[]               @relation("ProjectCreatedBy")
+  reportedTasks       Task[]                  @relation("TaskReporter")
+  taskAssignments     TaskAssignee[]
+  createdTasks        Task[]                  @relation("TaskCreatedBy")
+  taskSessions        TaskSession[]
+  memberships         Membership[]
+  projectRestrictions ProjectRestriction[]
+  passwordResetTokens PasswordResetToken[]
+  taskHistories       TaskHistory[]
+  taskComments        TaskComment[]
+  taskAttachments     TaskAttachment[]
+  notifications       Notification[]          @relation("UserNotifications")
+  triggeredNotifs     Notification[]          @relation("NotificationActors")
+  notifPreference     NotificationPreference?
+  workspaceOrders     UserWorkspaceOrder[]
+  projectOrders       UserProjectOrder[]
+  taskChecklists      TaskChecklist[]
+  stickyNotes         StickyNote[]
+  ownedEvents         CalendarEvent[]         @relation("CalendarEventOwner")
+  eventAttendees      CalendarEventAttendee[]
 
   @@index([deletedAt])
   @@map("users")
@@ -109,11 +134,12 @@ model Company {
   isActive    Boolean   @default(true) @map("is_active")
   createdById String    @map("created_by")
   createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt     @map("updated_at")
-  deletedAt   DateTime?                @map("deleted_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
 
-  createdBy  User        @relation("CompanyCreatedBy", fields: [createdById], references: [id])
-  workspaces Workspace[]
+  createdBy      User            @relation("CompanyCreatedBy", fields: [createdById], references: [id])
+  workspaces     Workspace[]
+  calendarEvents CalendarEvent[]
 
   @@map("companies")
 }
@@ -126,41 +152,42 @@ model Workspace {
   isActive    Boolean   @default(true) @map("is_active")
   createdById String    @map("created_by")
   createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt     @map("updated_at")
-  deletedAt   DateTime?                @map("deleted_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
 
   company         Company              @relation(fields: [companyId], references: [id])
   createdBy       User                 @relation("WorkspaceCreatedBy", fields: [createdById], references: [id])
   projects        Project[]
   workspaceOrders UserWorkspaceOrder[]
   projectOrders   UserProjectOrder[]
+  calendarEvents  CalendarEvent[]
 
   @@index([companyId])
   @@map("workspaces")
 }
 
 model Project {
-  id           String    @id @default(uuid())
-  workspaceId  String    @map("workspace_id")
-  name         String
-  description  String?
-  isActive     Boolean   @default(true) @map("is_active")
-  icon         String?   @map("icon")
-  iconColor    String?   @map("icon_color")
-  taskCounter  Int       @default(0) @map("task_counter")
-  createdById  String    @map("created_by")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt     @map("updated_at")
-  deletedAt    DateTime?                @map("deleted_at")
+  id          String    @id @default(uuid())
+  workspaceId String    @map("workspace_id")
+  name        String
+  description String?
+  isActive    Boolean   @default(true) @map("is_active")
+  icon        String?   @map("icon")
+  iconColor   String?   @map("icon_color")
+  taskCounter Int       @default(0) @map("task_counter")
+  createdById String    @map("created_by")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
 
-  workspace            Workspace            @relation(fields: [workspaceId], references: [id])
-  createdBy            User                 @relation("ProjectCreatedBy", fields: [createdById], references: [id])
-  columns              Column[]
-  tasks                Task[]
-  labels               Label[]
-  projectRestrictions  ProjectRestriction[]
-  notifications        Notification[]
-  projectOrders        UserProjectOrder[]
+  workspace           Workspace            @relation(fields: [workspaceId], references: [id])
+  createdBy           User                 @relation("ProjectCreatedBy", fields: [createdById], references: [id])
+  columns             Column[]
+  tasks               Task[]
+  labels              Label[]
+  projectRestrictions ProjectRestriction[]
+  notifications       Notification[]
+  projectOrders       UserProjectOrder[]
 
   @@index([workspaceId])
   @@map("projects")
@@ -174,8 +201,8 @@ model Column {
   color     String?
   isDone    Boolean   @default(false) @map("is_done")
   createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt     @map("updated_at")
-  deletedAt DateTime?                @map("deleted_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
 
   project Project @relation(fields: [projectId], references: [id])
   tasks   Task[]
@@ -194,26 +221,27 @@ model Task {
   priority    TaskPriority @default(medium)
   order       Int
   reporterId  String       @map("reporter_id")
-  startDate   DateTime?    @map("start_date")  @db.Date
-  dueDate     DateTime?    @map("due_date")    @db.Date
+  startDate   DateTime?    @map("start_date") @db.Date
+  dueDate     DateTime?    @map("due_date") @db.Date
   createdById String       @map("created_by")
   createdAt   DateTime     @default(now()) @map("created_at")
-  updatedAt   DateTime     @updatedAt      @map("updated_at")
-  deletedAt   DateTime?                    @map("deleted_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+  deletedAt   DateTime?    @map("deleted_at")
 
-  project    Project    @relation(fields: [projectId],  references: [id])
-  column     Column     @relation(fields: [columnId],   references: [id])
-  reporter      User           @relation("TaskReporter",  fields: [reporterId],  references: [id])
-  createdBy     User           @relation("TaskCreatedBy", fields: [createdById], references: [id])
-  taskLabels       TaskLabel[]
-  taskAssignees    TaskAssignee[]
-  taskHistory      TaskHistory[]
-  taskComments     TaskComment[]
-  taskAttachments  TaskAttachment[]
-  taskChecklists   TaskChecklist[]
-  notifications    Notification[]
-  taskSessions     TaskSession[]
-  stickyNoteLinks  StickyNoteTaskLink[]
+  project         Project              @relation(fields: [projectId], references: [id])
+  column          Column               @relation(fields: [columnId], references: [id])
+  reporter        User                 @relation("TaskReporter", fields: [reporterId], references: [id])
+  createdBy       User                 @relation("TaskCreatedBy", fields: [createdById], references: [id])
+  taskLabels      TaskLabel[]
+  taskAssignees   TaskAssignee[]
+  taskHistory     TaskHistory[]
+  taskComments    TaskComment[]
+  taskAttachments TaskAttachment[]
+  taskChecklists  TaskChecklist[]
+  notifications   Notification[]
+  taskSessions    TaskSession[]
+  stickyNoteLinks StickyNoteTaskLink[]
+  calendarEvents  CalendarEvent[]
 
   @@unique([projectId, taskNumber])
   @@index([columnId, order])
@@ -229,8 +257,8 @@ model Label {
   name      String
   color     String    @default("#6366f1")
   createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt      @map("updated_at")
-  deletedAt DateTime?                 @map("deleted_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
 
   project    Project     @relation(fields: [projectId], references: [id])
   taskLabels TaskLabel[]
@@ -244,7 +272,7 @@ model TaskLabel {
   taskId  String @map("task_id")
   labelId String @map("label_id")
 
-  task  Task  @relation(fields: [taskId],  references: [id], onDelete: Cascade)
+  task  Task  @relation(fields: [taskId], references: [id], onDelete: Cascade)
   label Label @relation(fields: [labelId], references: [id], onDelete: Cascade)
 
   @@id([taskId, labelId])
@@ -269,8 +297,8 @@ model Membership {
   resourceId   String         @map("resource_id")
   role         MembershipRole
   createdAt    DateTime       @default(now()) @map("created_at")
-  updatedAt    DateTime       @updatedAt     @map("updated_at")
-  deletedAt    DateTime?                     @map("deleted_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+  deletedAt    DateTime?      @map("deleted_at")
 
   user User @relation(fields: [userId], references: [id])
 
@@ -285,7 +313,7 @@ model ProjectRestriction {
   projectId String   @map("project_id")
   createdAt DateTime @default(now()) @map("created_at")
 
-  user    User    @relation(fields: [userId],    references: [id])
+  user    User    @relation(fields: [userId], references: [id])
   project Project @relation(fields: [projectId], references: [id])
 
   @@unique([userId, projectId])
@@ -300,7 +328,7 @@ model PasswordResetToken {
   tokenHash String    @unique @map("token_hash")
   type      TokenType @default(password_reset) @map("type")
   expiresAt DateTime  @map("expires_at")
-  usedAt    DateTime?                @map("used_at")
+  usedAt    DateTime? @map("used_at")
   createdAt DateTime  @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -332,8 +360,8 @@ model TaskComment {
   userId    String    @map("user_id")
   content   String
   createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt      @map("updated_at")
-  deletedAt DateTime?                 @map("deleted_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
 
   task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -352,7 +380,7 @@ model TaskAttachment {
   size         Int
   hasThumbnail Boolean   @default(false) @map("has_thumbnail")
   createdAt    DateTime  @default(now()) @map("created_at")
-  deletedAt    DateTime?                @map("deleted_at")
+  deletedAt    DateTime? @map("deleted_at")
 
   task       Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
   uploadedBy User @relation(fields: [uploadedById], references: [id])
@@ -369,10 +397,10 @@ model TaskChecklist {
   order       Int
   createdById String    @map("created_by")
   createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt      @map("updated_at")
-  deletedAt   DateTime?                 @map("deleted_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
 
-  task      Task @relation(fields: [taskId],      references: [id], onDelete: Cascade)
+  task      Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
   createdBy User @relation(fields: [createdById], references: [id])
 
   @@index([taskId, deletedAt])
@@ -425,7 +453,7 @@ model UserWorkspaceOrder {
   workspaceId String @map("workspace_id")
   position    Int
 
-  user      User      @relation(fields: [userId],      references: [id])
+  user      User      @relation(fields: [userId], references: [id])
   workspace Workspace @relation(fields: [workspaceId], references: [id])
 
   @@id([userId, workspaceId])
@@ -437,7 +465,7 @@ model TaskSession {
   id           String    @id @default(uuid())
   taskId       String    @map("task_id")
   userId       String    @map("user_id")
-  status       String    // "running" | "paused" | "stopped"
+  status       String // "running" | "paused" | "stopped"
   startedAt    DateTime  @default(now()) @map("started_at") @db.Timestamptz
   resumedAt    DateTime? @map("resumed_at") @db.Timestamptz
   pausedAt     DateTime? @map("paused_at") @db.Timestamptz
@@ -458,9 +486,9 @@ model UserProjectOrder {
   projectId   String @map("project_id")
   position    Int
 
-  user      User      @relation(fields: [userId],      references: [id])
+  user      User      @relation(fields: [userId], references: [id])
   workspace Workspace @relation(fields: [workspaceId], references: [id])
-  project   Project   @relation(fields: [projectId],   references: [id])
+  project   Project   @relation(fields: [projectId], references: [id])
 
   @@id([userId, projectId])
   @@index([userId, workspaceId])
@@ -478,8 +506,8 @@ model StickyNote {
   minimized Boolean         @default(false)
   zIndex    Int             @default(1000) @map("z_index")
   createdAt DateTime        @default(now()) @map("created_at")
-  updatedAt DateTime        @updatedAt      @map("updated_at")
-  deletedAt DateTime?                       @map("deleted_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+  deletedAt DateTime?       @map("deleted_at")
 
   user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   taskLinks StickyNoteTaskLink[]
@@ -498,4 +526,113 @@ model StickyNoteTaskLink {
   @@id([noteId, taskId])
   @@index([taskId])
   @@map("sticky_note_task_links")
+}
+
+model CalendarEvent {
+  id              String          @id @default(uuid())
+  ownerId         String          @map("owner_id")
+  companyId       String?         @map("company_id")
+  workspaceId     String?         @map("workspace_id")
+  taskId          String?         @map("task_id")
+  title           String
+  description     String?
+  location        String?
+  color           String?
+  allDay          Boolean         @default(false) @map("all_day")
+  startsAt        DateTime        @map("starts_at") @db.Timestamptz
+  endsAt          DateTime        @map("ends_at") @db.Timestamptz
+  timezone        String          @default("America/Sao_Paulo")
+  rrule           String?
+  recurrenceEndAt DateTime?       @map("recurrence_end_at") @db.Timestamptz
+  visibility      EventVisibility @default(private)
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+  deletedAt       DateTime?       @map("deleted_at")
+
+  owner      User                     @relation("CalendarEventOwner", fields: [ownerId], references: [id])
+  company    Company?                 @relation(fields: [companyId], references: [id])
+  workspace  Workspace?               @relation(fields: [workspaceId], references: [id])
+  task       Task?                    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  attendees   CalendarEventAttendee[]
+  reminders   CalendarEventReminder[]
+  exceptions  CalendarEventException[]
+  guestEmails CalendarEventGuestEmail[]
+
+  @@index([ownerId, deletedAt])
+  @@index([startsAt, deletedAt])
+  @@index([workspaceId, deletedAt])
+  @@map("calendar_events")
+}
+
+model CalendarEventAttendee {
+  id        String         @id @default(uuid())
+  eventId   String         @map("event_id")
+  userId    String         @map("user_id")
+  status    AttendeeStatus @default(invited)
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  event CalendarEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
+  @@index([userId])
+  @@map("calendar_event_attendees")
+}
+
+model CalendarEventReminder {
+  id            String         @id @default(uuid())
+  eventId       String         @map("event_id")
+  minutesBefore Int            @map("minutes_before")
+  method        ReminderMethod @default(email)
+
+  event CalendarEvent               @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  sent  CalendarEventReminderSent[]
+
+  @@index([eventId])
+  @@map("calendar_event_reminders")
+}
+
+model CalendarEventGuestEmail {
+  id        String   @id @default(uuid())
+  eventId   String   @map("event_id")
+  email     String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  event CalendarEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, email])
+  @@index([eventId])
+  @@map("calendar_event_guest_emails")
+}
+
+model CalendarEventReminderSent {
+  id           String   @id @default(uuid())
+  reminderId   String   @map("reminder_id")
+  recipientId  String   @map("recipient_id")
+  originalDate DateTime @map("original_date") @db.Timestamptz
+  sentAt       DateTime @default(now()) @map("sent_at")
+
+  reminder CalendarEventReminder @relation(fields: [reminderId], references: [id], onDelete: Cascade)
+
+  @@unique([reminderId, recipientId, originalDate])
+  @@map("calendar_event_reminders_sent")
+}
+
+model CalendarEventException {
+  id                  String    @id @default(uuid())
+  eventId             String    @map("event_id")
+  originalDate        DateTime  @map("original_date") @db.Timestamptz
+  isCancelled         Boolean   @default(false) @map("is_cancelled")
+  overrideTitle       String?   @map("override_title")
+  overrideDescription String?   @map("override_description")
+  overrideStartsAt    DateTime? @map("override_starts_at") @db.Timestamptz
+  overrideEndsAt      DateTime? @map("override_ends_at") @db.Timestamptz
+  overrideLocation    String?   @map("override_location")
+  createdAt           DateTime  @default(now()) @map("created_at")
+
+  event CalendarEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, originalDate])
+  @@map("calendar_event_exceptions")
 }
