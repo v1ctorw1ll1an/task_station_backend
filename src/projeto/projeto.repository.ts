@@ -584,6 +584,14 @@ export class ProjetoRepository {
     });
   }
 
+  reorderChecklists(items: { id: string; order: number }[]) {
+    return this.prisma.$transaction(
+      items.map(({ id, order }) =>
+        this.prisma.taskChecklist.update({ where: { id }, data: { order } }),
+      ),
+    );
+  }
+
   // ── Task History ──────────────────────────────────────────────────────────────
 
   createTaskHistories(

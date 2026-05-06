@@ -39,6 +39,7 @@ import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
 import { CreateChecklistDto } from './dto/create-checklist.dto';
 import { UpdateChecklistDto } from './dto/update-checklist.dto';
+import { ReorderChecklistDto } from './dto/reorder-checklist.dto';
 
 @ApiTags('projetos')
 @ApiBearerAuth()
@@ -143,6 +144,14 @@ export class ProjetoController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.projetoService.createTask(projectId, dto, user.id);
+  }
+
+  @Get('tasks/:taskId')
+  @ApiOperation({ summary: 'Busca task por ID' })
+  @ApiResponse({ status: 200, description: 'Task encontrada' })
+  @ApiResponse({ status: 404, description: 'Task não encontrada' })
+  getTask(@Param('projectId') projectId: string, @Param('taskId') taskId: string) {
+    return this.projetoService.getTask(projectId, taskId);
   }
 
   @Patch('tasks/:taskId')
@@ -346,6 +355,18 @@ export class ProjetoController {
     @Param('checklistId') checklistId: string,
   ) {
     await this.projetoService.deleteChecklist(projectId, taskId, checklistId);
+  }
+
+  @Patch('tasks/:taskId/checklists/reorder')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Reordenar itens do checklist' })
+  @ApiResponse({ status: 204, description: 'Ordem salva' })
+  async reorderChecklists(
+    @Param('projectId') projectId: string,
+    @Param('taskId') taskId: string,
+    @Body() dto: ReorderChecklistDto,
+  ) {
+    await this.projetoService.reorderChecklists(projectId, taskId, dto);
   }
 
   // ── Comentários ───────────────────────────────────────────────────────────────

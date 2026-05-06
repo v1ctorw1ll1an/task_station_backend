@@ -30,6 +30,23 @@ export class ListMyTasksQueryDto {
   @IsString()
   dueDateTo?: string;
 
+  @ApiPropertyOptional({ description: 'Data inicial de criação (ISO date)' })
+  @IsOptional()
+  @IsString()
+  createdAtFrom?: string;
+
+  @ApiPropertyOptional({ description: 'Data final de criação (ISO date)' })
+  @IsOptional()
+  @IsString()
+  createdAtTo?: string;
+
+  @ApiPropertyOptional({
+    description: 'Modo de combinação dos filtros de data: "or" aplica dueDate OR createdAt',
+  })
+  @IsOptional()
+  @IsString()
+  dateMode?: string;
+
   @ApiPropertyOptional({ default: 1 })
   @IsOptional()
   @Type(() => Number)

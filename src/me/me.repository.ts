@@ -76,7 +76,17 @@ export class MeRepository {
     userId: string,
     companyId: string,
     dueDateFilter?: { gte?: Date; lte?: Date },
+    createdAtFilter?: { gte?: Date; lte?: Date },
+    dateMode?: string,
   ): Prisma.TaskWhereInput {
+    const dateCondition =
+      dateMode === 'or' && dueDateFilter && createdAtFilter
+        ? { OR: [{ dueDate: dueDateFilter }, { createdAt: createdAtFilter }] }
+        : {
+            ...(dueDateFilter ? { dueDate: dueDateFilter } : {}),
+            ...(createdAtFilter ? { createdAt: createdAtFilter } : {}),
+          };
+
     return {
       deletedAt: null,
       taskAssignees: { some: { userId } },
@@ -86,7 +96,7 @@ export class MeRepository {
         isActive: true,
         workspace: { deletedAt: null, isActive: true, companyId },
       },
-      ...(dueDateFilter ? { dueDate: dueDateFilter } : {}),
+      ...dateCondition,
     };
   }
 
@@ -96,9 +106,11 @@ export class MeRepository {
     dueDateFilter?: { gte?: Date; lte?: Date },
     page = 1,
     limit = 20,
+    createdAtFilter?: { gte?: Date; lte?: Date },
+    dateMode?: string,
   ) {
     return this.prisma.task.findMany({
-      where: this.buildUserTasksWhere(userId, companyId, dueDateFilter),
+      where: this.buildUserTasksWhere(userId, companyId, dueDateFilter, createdAtFilter, dateMode),
       select: {
         id: true,
         title: true,
@@ -128,9 +140,11 @@ export class MeRepository {
     userId: string,
     companyId: string,
     dueDateFilter?: { gte?: Date; lte?: Date },
+    createdAtFilter?: { gte?: Date; lte?: Date },
+    dateMode?: string,
   ) {
     return this.prisma.task.count({
-      where: this.buildUserTasksWhere(userId, companyId, dueDateFilter),
+      where: this.buildUserTasksWhere(userId, companyId, dueDateFilter, createdAtFilter, dateMode),
     });
   }
 

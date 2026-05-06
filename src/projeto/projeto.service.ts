@@ -25,6 +25,7 @@ import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
 import { CreateChecklistDto } from './dto/create-checklist.dto';
 import { UpdateChecklistDto } from './dto/update-checklist.dto';
+import { ReorderChecklistDto } from './dto/reorder-checklist.dto';
 import { TransferTaskDto } from './dto/transfer-task.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import * as fs from 'fs/promises';
@@ -185,13 +186,15 @@ export class ProjetoService {
       throw new NotFoundException('Coluna não encontrada');
     }
 
+    const assigneeIds = [...new Set([userId, ...(dto.assigneeIds ?? [])])];
+
     const task = await this.repo.createTask({
       projectId,
       columnId: dto.columnId,
       title: dto.title,
       description: dto.description,
       priority: dto.priority,
-      assigneeIds: dto.assigneeIds,
+      assigneeIds,
       reporterId: userId,
       createdById: userId,
       startDate: dto.startDate,
@@ -435,6 +438,12 @@ export class ProjetoService {
     return this.repo.findTaskById(taskId, projectId);
   }
 
+  async getTask(projectId: string, taskId: string) {
+    const task = await this.repo.findTaskById(taskId, projectId);
+    if (!task) throw new NotFoundException('Task não encontrada');
+    return task;
+  }
+
   async getTaskHistory(projectId: string, taskId: string) {
     const task = await this.repo.findTaskById(taskId, projectId);
     if (!task) {
@@ -599,6 +608,14 @@ export class ProjetoService {
 
     await this.repo.softDeleteChecklist(checklistId);
     this.logger.info({ projectId, taskId, checklistId }, 'Checklist item soft-deleted');
+  }
+
+  async reorderChecklists(projectId: string, taskId: string, dto: ReorderChecklistDto) {
+    const items = dto.items;
+    const task = await this.repo.findTaskById(taskId, projectId);
+    if (!task) throw new NotFoundException('Task não encontrada');
+    await this.repo.reorderChecklists(items);
+    this.logger.info({ projectId, taskId }, 'Checklist reordered');
   }
 
   // ── Comentários ───────────────────────────────────────────────────────────────
