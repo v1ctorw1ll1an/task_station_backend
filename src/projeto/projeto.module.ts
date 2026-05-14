@@ -8,6 +8,8 @@ import { ProjetoController } from './projeto.controller';
 import { ProjetoRepository } from './projeto.repository';
 import { ProjetoService } from './projeto.service';
 import { AttachmentService } from './attachment.service';
+import { AttachmentJanitorService } from './attachment-janitor.service';
+import { MediaPoolService } from './media-pool.service';
 import { ProjetoMemberGuard } from './guards/projeto-member.guard';
 import { ProjetoAdminGuard } from './guards/projeto-admin.guard';
 import { WsAuthGuard } from '../common/guards/ws-auth.guard';
@@ -32,6 +34,8 @@ import { NotificacaoModule } from '../notificacao/notificacao.module';
     ProjetoRepository,
     ProjetoService,
     AttachmentService,
+    AttachmentJanitorService,
+    MediaPoolService,
     ProjetoMemberGuard,
     ProjetoAdminGuard,
     KanbanGateway,

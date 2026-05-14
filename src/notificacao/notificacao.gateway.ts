@@ -9,7 +9,10 @@ import {
 import { Server, Socket } from 'socket.io';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { WsAuthGuard } from '../common/guards/ws-auth.guard';
+import { MetricsService } from '../metrics/metrics.service';
 import type { AuthUser } from '../auth/strategies/jwt.strategy';
+
+const NAMESPACE = 'notifications';
 
 @WebSocketGateway({
   namespace: '/notifications',
@@ -18,13 +21,18 @@ import type { AuthUser } from '../auth/strategies/jwt.strategy';
 export class NotificacaoGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer() server: Server;
 
-  constructor(@InjectPinoLogger(NotificacaoGateway.name) private readonly logger: PinoLogger) {}
+  constructor(
+    @InjectPinoLogger(NotificacaoGateway.name) private readonly logger: PinoLogger,
+    private readonly metrics: MetricsService,
+  ) {}
 
   handleConnection(client: Socket) {
+    this.metrics.wsConnect(NAMESPACE);
     this.logger.debug({ socketId: client.id }, 'Cliente conectado ao NotificacaoGateway');
   }
 
   handleDisconnect(client: Socket) {
+    this.metrics.wsDisconnect(NAMESPACE);
     this.logger.debug({ socketId: client.id }, 'Cliente desconectado do NotificacaoGateway');
   }
 

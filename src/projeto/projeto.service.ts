@@ -44,15 +44,31 @@ export class ProjetoService {
 
   // ── Kanban ────────────────────────────────────────────────────────────────────
 
-  async getKanban(projectId: string) {
+  async getKanban(projectId: string, opts: { tasksPerColumn?: number } = {}) {
     const project = await this.repo.findProjectById(projectId);
     if (!project) {
       throw new NotFoundException('Projeto não encontrado');
     }
 
-    const kanban = await this.repo.getKanban(projectId);
-    this.logger.debug({ projectId }, 'Kanban fetched');
+    const kanban = await this.repo.getKanban(projectId, opts);
+    this.logger.debug({ projectId, tasksPerColumn: opts.tasksPerColumn }, 'Kanban fetched');
     return kanban;
+  }
+
+  async listColumnTasks(
+    projectId: string,
+    columnId: string,
+    opts: { page: number; limit: number },
+  ) {
+    const project = await this.repo.findProjectById(projectId);
+    if (!project) {
+      throw new NotFoundException('Projeto não encontrado');
+    }
+    const column = await this.repo.findColumnById(columnId, projectId);
+    if (!column) {
+      throw new NotFoundException('Coluna não encontrada');
+    }
+    return this.repo.findColumnTasks(columnId, projectId, opts);
   }
 
   async getProjectLastModifiedAt(projectId: string) {

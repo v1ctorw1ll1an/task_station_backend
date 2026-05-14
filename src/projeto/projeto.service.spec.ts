@@ -103,7 +103,7 @@ describe('ProjetoService', () => {
       repo.findProjectById.mockResolvedValue(makeProject());
       repo.getKanban.mockResolvedValue({
         projectName: 'Projeto 1',
-        columns: [{ ...makeColumn(), tasks: [makeTask()] }],
+        columns: [{ ...makeColumn(), tasks: [makeTask()], _count: { tasks: 1 } }],
       });
       const service = makeService(repo);
 

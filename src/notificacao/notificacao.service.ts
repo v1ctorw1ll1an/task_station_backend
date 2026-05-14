@@ -24,6 +24,8 @@ const PREF_KEY_MAP: Record<NotificationType, string> = {
   TASK_UPDATED: 'taskUpdated',
 };
 
+const BROADCAST_CHUNK_SIZE = 500;
+
 @Injectable()
 export class NotificacaoService {
   constructor(
@@ -76,28 +78,37 @@ export class NotificacaoService {
 
     if (allowed.length === 0) return;
 
-    // Bulk insert
-    await this.repo.createMany(
-      allowed.map((i) => ({
-        recipientId: i.recipientId,
-        type: i.type,
-        title: i.title,
-        body: i.body,
-        actorId: i.actorId ?? null,
-        taskId: i.taskId ?? null,
-        projectId: i.projectId ?? null,
-        metadata: i.metadata ? (i.metadata as Prisma.InputJsonValue) : Prisma.JsonNull,
-      })),
-    );
+    // Process in chunks so a single large broadcast (e.g. company-wide)
+    // doesn't lock the DB or monopolize the event loop.
+    for (let offset = 0; offset < allowed.length; offset += BROADCAST_CHUNK_SIZE) {
+      const chunk = allowed.slice(offset, offset + BROADCAST_CHUNK_SIZE);
 
-    // Emit individually — we don't have the full row with actor join after createMany,
-    // so emit a minimal payload that the client can display
-    for (const input of allowed) {
-      this.gateway.emitToUser(input.recipientId, 'notification:new', {
-        type: input.type,
-        title: input.title,
-        body: input.body,
-      });
+      await this.repo.createMany(
+        chunk.map((i) => ({
+          recipientId: i.recipientId,
+          type: i.type,
+          title: i.title,
+          body: i.body,
+          actorId: i.actorId ?? null,
+          taskId: i.taskId ?? null,
+          projectId: i.projectId ?? null,
+          metadata: i.metadata ? (i.metadata as Prisma.InputJsonValue) : Prisma.JsonNull,
+        })),
+      );
+
+      // Emit minimal payload — we don't have full rows with actor join after createMany.
+      for (const input of chunk) {
+        this.gateway.emitToUser(input.recipientId, 'notification:new', {
+          type: input.type,
+          title: input.title,
+          body: input.body,
+        });
+      }
+
+      // Yield to the event loop between chunks so other requests can be served.
+      if (offset + BROADCAST_CHUNK_SIZE < allowed.length) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
     }
   }
 

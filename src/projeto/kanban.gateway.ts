@@ -10,9 +10,12 @@ import {
 import { Server, Socket } from 'socket.io';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
+import { MetricsService } from '../metrics/metrics.service';
 import { WsAuthGuard } from './guards/ws-auth.guard';
 import type { AuthUser } from '../auth/strategies/jwt.strategy';
 import type { KanbanEvent } from './kanban-events.types';
+
+const NAMESPACE = 'kanban';
 
 @WebSocketGateway({
   namespace: '/kanban',
@@ -29,6 +32,7 @@ export class KanbanGateway implements OnGatewayInit, OnGatewayConnection, OnGate
     private readonly prisma: PrismaService,
     @InjectPinoLogger(KanbanGateway.name)
     private readonly logger: PinoLogger,
+    private readonly metrics: MetricsService,
   ) {}
 
   afterInit() {
@@ -36,10 +40,12 @@ export class KanbanGateway implements OnGatewayInit, OnGatewayConnection, OnGate
   }
 
   handleConnection(client: Socket) {
+    this.metrics.wsConnect(NAMESPACE);
     this.logger.debug({ socketId: client.id }, 'Cliente conectado ao KanbanGateway');
   }
 
   handleDisconnect(client: Socket) {
+    this.metrics.wsDisconnect(NAMESPACE);
     this.logger.debug({ socketId: client.id }, 'Cliente desconectado do KanbanGateway');
   }
 

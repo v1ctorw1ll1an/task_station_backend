@@ -371,7 +371,9 @@ export class ProjetoRepository {
     return result[0].last_modified;
   }
 
-  async getKanban(projectId: string) {
+  async getKanban(projectId: string, opts: { tasksPerColumn?: number } = {}) {
+    const tasksPerColumn = opts.tasksPerColumn ?? 50;
+
     const project = await this.prisma.project.findFirst({
       where: { id: projectId, deletedAt: null },
       select: { id: true, name: true },
@@ -385,12 +387,40 @@ export class ProjetoRepository {
         tasks: {
           where: { deletedAt: null },
           orderBy: { order: 'asc' },
+          take: tasksPerColumn,
           select: TASK_SELECT,
+        },
+        _count: {
+          select: { tasks: { where: { deletedAt: null } } },
         },
       },
     });
 
     return { columns, projectName: project?.name ?? '' };
+  }
+
+  async findColumnTasks(
+    columnId: string,
+    projectId: string,
+    opts: { page: number; limit: number },
+  ) {
+    const { page, limit } = opts;
+    const skip = Math.max(0, (page - 1) * limit);
+
+    const [tasks, total] = await Promise.all([
+      this.prisma.task.findMany({
+        where: { columnId, projectId, deletedAt: null },
+        orderBy: { order: 'asc' },
+        skip,
+        take: limit,
+        select: TASK_SELECT,
+      }),
+      this.prisma.task.count({
+        where: { columnId, projectId, deletedAt: null },
+      }),
+    ]);
+
+    return { tasks, total, page, limit };
   }
 
   // ── Membros do workspace (para select de responsável) ─────────────────────────
@@ -687,7 +717,7 @@ export class ProjetoRepository {
     });
   }
 
-  countAttachments(taskId: string, mimePrefix: 'image/' | 'video/') {
+  countAttachments(taskId: string, mimePrefix: 'image/' | 'video/' | 'application/pdf') {
     return this.prisma.taskAttachment.count({
       where: { taskId, deletedAt: null, mimeType: { startsWith: mimePrefix } },
     });

@@ -9,16 +9,17 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { join } from 'path';
 import { existsSync, mkdirSync, unlinkSync } from 'fs';
 import { randomUUID } from 'crypto';
-import sharp from 'sharp';
-import ffmpeg from 'fluent-ffmpeg';
+import { MediaPoolService } from './media-pool.service';
 import { ProjetoRepository } from './projeto.repository';
 
 // ── Limits ───────────────────────────────────────────────────────────────────
 
 const IMAGE_MAX_BYTES = 16 * 1024 * 1024; // 16 MB
 const VIDEO_MAX_BYTES = 64 * 1024 * 1024; // 64 MB
+const PDF_MAX_BYTES = 32 * 1024 * 1024; // 32 MB
 const IMAGE_MAX_COUNT = 3;
 const VIDEO_MAX_COUNT = 1;
+const PDF_MAX_COUNT = 1;
 const IMAGE_MAX_PX = 1920;
 const IMAGE_QUALITY = 85;
 const THUMB_MAX_PX = 400;
@@ -42,6 +43,8 @@ const ALLOWED_VIDEO_TYPES = new Set([
   'video/x-matroska',
 ]);
 
+const ALLOWED_PDF_TYPES = new Set(['application/pdf']);
+
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
 const UPLOADS_ROOT = join(process.cwd(), 'uploads', 'attachments');
@@ -62,6 +65,7 @@ function ensureDir(dir: string) {
 export class AttachmentService {
   constructor(
     private readonly repo: ProjetoRepository,
+    private readonly mediaPool: MediaPoolService,
     @InjectPinoLogger(AttachmentService.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -76,11 +80,15 @@ export class AttachmentService {
     return ALLOWED_VIDEO_TYPES.has(mime);
   }
 
+  private isPdf(mime: string) {
+    return ALLOWED_PDF_TYPES.has(mime);
+  }
+
   private validateFile(file: Express.Multer.File) {
     const mime = file.mimetype;
-    if (!this.isImage(mime) && !this.isVideo(mime)) {
+    if (!this.isImage(mime) && !this.isVideo(mime) && !this.isPdf(mime)) {
       throw new UnsupportedMediaTypeException(
-        'Tipo de arquivo não suportado. Envie uma imagem ou vídeo.',
+        'Tipo de arquivo não suportado. Envie uma imagem, vídeo ou PDF.',
       );
     }
     if (this.isImage(mime) && file.size > IMAGE_MAX_BYTES) {
@@ -89,9 +97,14 @@ export class AttachmentService {
     if (this.isVideo(mime) && file.size > VIDEO_MAX_BYTES) {
       throw new PayloadTooLargeException('Vídeo excede o limite de 64 MB.');
     }
+    if (this.isPdf(mime) && file.size > PDF_MAX_BYTES) {
+      throw new PayloadTooLargeException(
+        `PDF excede o limite de ${PDF_MAX_BYTES / 1024 / 1024} MB.`,
+      );
+    }
   }
 
-  // ── Image processing ───────────────────────────────────────────────────────
+  // ── Media processing (delegated to worker thread pool) ────────────────────
 
   private async processImage(
     buffer: Buffer,
@@ -103,41 +116,17 @@ export class AttachmentService {
     ensureDir(thumbDestDir);
 
     const storedName = `${uuid}.webp`;
-    const fullPath = join(destDir, storedName);
-    const thumbPath = join(thumbDestDir, storedName);
-
-    await sharp(buffer)
-      .rotate() // auto-rotate based on EXIF
-      .resize(IMAGE_MAX_PX, IMAGE_MAX_PX, { fit: 'inside', withoutEnlargement: true })
-      .webp({ quality: IMAGE_QUALITY })
-      .toFile(fullPath);
-
-    await sharp(buffer)
-      .rotate()
-      .resize(THUMB_MAX_PX, THUMB_MAX_PX, { fit: 'inside', withoutEnlargement: true })
-      .webp({ quality: THUMB_QUALITY })
-      .toFile(thumbPath);
-
-    const stat = (await import('fs')).statSync(fullPath);
-    return { storedName, processedSize: stat.size, hasThumbnail: true };
-  }
-
-  // ── Video thumbnail ────────────────────────────────────────────────────────
-
-  private extractVideoThumbnail(videoPath: string, thumbPath: string): Promise<void> {
-    return new Promise((resolve) => {
-      ffmpeg(videoPath)
-        .screenshots({
-          timestamps: ['00:00:01'],
-          filename: thumbPath,
-          size: `${THUMB_MAX_PX}x?`,
-        })
-        .on('end', () => resolve())
-        .on('error', (err: Error) => {
-          this.logger.warn({ err: err.message }, 'Video thumbnail extraction failed — skipping');
-          resolve(); // non-fatal
-        });
+    const result = await this.mediaPool.processImage({
+      buffer,
+      fullPath: join(destDir, storedName),
+      thumbPath: join(thumbDestDir, storedName),
+      maxPx: IMAGE_MAX_PX,
+      quality: IMAGE_QUALITY,
+      thumbMaxPx: THUMB_MAX_PX,
+      thumbQuality: THUMB_QUALITY,
     });
+
+    return { storedName, processedSize: result.processedSize, hasThumbnail: result.hasThumbnail };
   }
 
   private async processVideo(
@@ -152,16 +141,33 @@ export class AttachmentService {
 
     const ext = originalName.split('.').pop()?.toLowerCase() ?? 'mp4';
     const storedName = `${uuid}.${ext}`;
-    const fullPath = join(destDir, storedName);
     const thumbName = `${uuid}.jpg`;
-    const thumbPath = join(thumbDestDir, thumbName);
 
-    await (await import('fs/promises')).writeFile(fullPath, buffer);
+    const result = await this.mediaPool.processVideo({
+      buffer,
+      fullPath: join(destDir, storedName),
+      thumbPath: join(thumbDestDir, thumbName),
+      thumbMaxPx: THUMB_MAX_PX,
+    });
 
-    await this.extractVideoThumbnail(fullPath, thumbPath);
-    const hasThumbnail = existsSync(thumbPath);
+    if (!result.hasThumbnail) {
+      this.logger.warn({ storedName }, 'Video thumbnail extraction failed — skipping');
+    }
 
-    return { storedName, processedSize: buffer.length, hasThumbnail };
+    return { storedName, processedSize: result.processedSize, hasThumbnail: result.hasThumbnail };
+  }
+
+  private async processPdf(
+    buffer: Buffer,
+    destDir: string,
+    uuid: string,
+  ): Promise<{ storedName: string; processedSize: number; hasThumbnail: boolean }> {
+    ensureDir(destDir);
+
+    const storedName = `${uuid}.pdf`;
+    await this.mediaPool.writeBytes({ buffer, fullPath: join(destDir, storedName) });
+
+    return { storedName, processedSize: buffer.length, hasThumbnail: false };
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -176,10 +182,15 @@ export class AttachmentService {
       if (count >= IMAGE_MAX_COUNT) {
         throw new BadRequestException(`Limite de ${IMAGE_MAX_COUNT} imagens por task atingido.`);
       }
-    } else {
+    } else if (this.isVideo(mime)) {
       const count = await this.repo.countAttachments(taskId, 'video/');
       if (count >= VIDEO_MAX_COUNT) {
         throw new BadRequestException(`Limite de ${VIDEO_MAX_COUNT} vídeo por task atingido.`);
+      }
+    } else {
+      const count = await this.repo.countAttachments(taskId, 'application/pdf');
+      if (count >= PDF_MAX_COUNT) {
+        throw new BadRequestException(`Limite de ${PDF_MAX_COUNT} PDF por task atingido.`);
       }
     }
 
@@ -198,7 +209,7 @@ export class AttachmentService {
         tDir,
         uuid,
       ));
-    } else {
+    } else if (this.isVideo(mime)) {
       ({ storedName, processedSize, hasThumbnail } = await this.processVideo(
         file.buffer,
         dir,
@@ -206,6 +217,8 @@ export class AttachmentService {
         uuid,
         file.originalname,
       ));
+    } else {
+      ({ storedName, processedSize, hasThumbnail } = await this.processPdf(file.buffer, dir, uuid));
     }
 
     const attachment = await this.repo.createAttachment({
@@ -246,7 +259,11 @@ export class AttachmentService {
     return filePath;
   }
 
-  serveThumbnail(taskId: string, storedName: string, isVideo: boolean): string {
+  serveThumbnail(taskId: string, storedName: string, mimeType: string): string {
+    if (this.isPdf(mimeType)) {
+      throw new NotFoundException('PDF não possui thumbnail');
+    }
+    const isVideo = this.isVideo(mimeType);
     const thumbName = isVideo ? storedName.replace(/\.[^.]+$/, '.jpg') : storedName;
     const thumbPath = join(thumbDir(taskId), thumbName);
     if (!existsSync(thumbPath)) throw new NotFoundException('Thumbnail não encontrado');

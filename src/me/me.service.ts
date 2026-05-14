@@ -108,9 +108,9 @@ export class MeService {
   }
 
   async getMyTasks(userId: string, dto: ListMyTasksQueryDto) {
-    const { companyId, filter, page = 1, limit = 20, dateMode } = dto;
+    const { companyId, filter, page = 1, limit = 20 } = dto;
     const dueDateFilter = this.buildDueDateFilter(dto);
-    const createdAtFilter = this.buildCreatedAtFilter(dto);
+    const startDateFilter = this.buildStartDateFilter(dto);
 
     const [data, total] = await Promise.all([
       this.repo.findUserTasksByCompany(
@@ -119,28 +119,21 @@ export class MeService {
         dueDateFilter,
         page,
         limit,
-        createdAtFilter,
-        dateMode,
+        startDateFilter,
       ),
-      this.repo.countUserTasksByCompany(
-        userId,
-        companyId,
-        dueDateFilter,
-        createdAtFilter,
-        dateMode,
-      ),
+      this.repo.countUserTasksByCompany(userId, companyId, dueDateFilter, startDateFilter),
     ]);
 
     this.logger.info({ userId, companyId, filter, total }, 'User tasks fetched');
     return { data, total, page, limit };
   }
 
-  private buildCreatedAtFilter(dto: ListMyTasksQueryDto): { gte?: Date; lte?: Date } | undefined {
-    if (!dto.createdAtFrom && !dto.createdAtTo) return undefined;
+  private buildStartDateFilter(dto: ListMyTasksQueryDto): { gte?: Date; lte?: Date } | undefined {
+    if (!dto.startDateFrom && !dto.startDateTo) return undefined;
     const result: { gte?: Date; lte?: Date } = {};
-    if (dto.createdAtFrom) result.gte = new Date(dto.createdAtFrom);
-    if (dto.createdAtTo) {
-      const to = new Date(dto.createdAtTo);
+    if (dto.startDateFrom) result.gte = new Date(dto.startDateFrom);
+    if (dto.startDateTo) {
+      const to = new Date(dto.startDateTo);
       to.setHours(23, 59, 59, 999);
       result.lte = to;
     }

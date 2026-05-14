@@ -1,13 +1,16 @@
 import {
   Body,
   Controller,
+  DefaultValuePipe,
   Delete,
   Get,
   HttpCode,
   HttpStatus,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
+  Query,
   Request,
   Res,
   UploadedFile,
@@ -18,6 +21,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
 import { createReadStream } from 'fs';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthUser } from '../auth/strategies/jwt.strategy';
 import { ProjetoAdminGuard } from './guards/projeto-admin.guard';
@@ -57,8 +61,30 @@ export class ProjetoController {
   @ApiOperation({ summary: 'Retorna colunas e tasks do projeto (Kanban)' })
   @ApiResponse({ status: 200, description: 'Kanban retornado com sucesso' })
   @ApiResponse({ status: 404, description: 'Projeto não encontrado' })
-  getKanban(@Param('projectId') projectId: string) {
-    return this.projetoService.getKanban(projectId);
+  getKanban(
+    @Param('projectId') projectId: string,
+    @Query('tasksPerColumn', new DefaultValuePipe(50), ParseIntPipe) tasksPerColumn: number,
+  ) {
+    const safeLimit = Math.min(Math.max(tasksPerColumn, 1), 200);
+    return this.projetoService.getKanban(projectId, { tasksPerColumn: safeLimit });
+  }
+
+  @Get('colunas/:columnId/tasks')
+  @ApiOperation({ summary: 'Paginação de tasks de uma coluna (load more do Kanban)' })
+  @ApiResponse({ status: 200, description: 'Lista paginada de tasks' })
+  @ApiResponse({ status: 404, description: 'Projeto ou coluna não encontrados' })
+  listColumnTasks(
+    @Param('projectId') projectId: string,
+    @Param('columnId') columnId: string,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+  ) {
+    const safePage = Math.max(page, 1);
+    const safeLimit = Math.min(Math.max(limit, 1), 200);
+    return this.projetoService.listColumnTasks(projectId, columnId, {
+      page: safePage,
+      limit: safeLimit,
+    });
   }
 
   @Get('membros')
@@ -439,11 +465,19 @@ export class ProjetoController {
   }
 
   @Post('tasks/:taskId/attachments')
+  @Throttle({
+    default: {
+      limit: 20,
+      ttl: 60_000,
+      getTracker: (req: { user?: { id?: string }; ip?: string }) =>
+        req.user?.id ?? req.ip ?? 'anonymous',
+    },
+  })
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
     FileInterceptor('file', { storage: undefined, limits: { fileSize: 64 * 1024 * 1024 } }),
   )
-  @ApiOperation({ summary: 'Upload de anexo (imagem ou vídeo)' })
+  @ApiOperation({ summary: 'Upload de anexo (imagem, vídeo ou PDF)' })
   @ApiResponse({ status: 201, description: 'Anexo salvo' })
   uploadAttachment(
     @Param('taskId') taskId: string,
@@ -465,9 +499,8 @@ export class ProjetoController {
       res.status(404).json({ message: 'Anexo não encontrado' });
       return;
     }
-    const isVideo = att.mimeType.startsWith('video/');
-    const filePath = this.attachmentService.serveThumbnail(taskId, att.storedName, isVideo);
-    const contentType = isVideo ? 'image/jpeg' : 'image/webp';
+    const filePath = this.attachmentService.serveThumbnail(taskId, att.storedName, att.mimeType);
+    const contentType = att.mimeType.startsWith('video/') ? 'image/jpeg' : 'image/webp';
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     createReadStream(filePath).pipe(res);
@@ -486,7 +519,8 @@ export class ProjetoController {
       return;
     }
     const filePath = this.attachmentService.serveFile(taskId, att.storedName);
-    res.setHeader('Content-Type', att.mimeType.startsWith('video/') ? att.mimeType : 'image/webp');
+    const contentType = att.mimeType.startsWith('image/') ? 'image/webp' : att.mimeType;
+    res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'private, max-age=3600');
     createReadStream(filePath).pipe(res);
   }

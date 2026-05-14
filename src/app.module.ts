@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, HttpAdapterHost } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { Logger, LoggerModule } from 'nestjs-pino';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
@@ -11,6 +12,7 @@ import { WorkspaceModule } from './workspace/workspace.module';
 import { HealthModule } from './health/health.module';
 import { MailerModule } from './mailer/mailer.module';
 import { MeModule } from './me/me.module';
+import { MetricsModule } from './metrics/metrics.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProjetoModule } from './projeto/projeto.module';
 import { SuperadminModule } from './superadmin/superadmin.module';
@@ -71,7 +73,18 @@ import { EventoModule } from './evento/evento.module';
       },
     }),
     ScheduleModule.forRoot(),
+    ThrottlerModule.forRoot({
+      throttlers: [
+        {
+          name: 'default',
+          limit: 1000,
+          ttl: 60_000, // 1 min
+        },
+      ],
+      errorMessage: 'Muitas requisições. Tente novamente em alguns instantes.',
+    }),
     PrismaModule,
+    MetricsModule,
     MailerModule,
     HealthModule,
     AuthModule,
@@ -90,6 +103,10 @@ import { EventoModule } from './evento/evento.module';
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
     },
     {
       provide: APP_FILTER,
