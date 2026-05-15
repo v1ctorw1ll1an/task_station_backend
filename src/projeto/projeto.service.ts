@@ -594,6 +594,9 @@ export class ProjetoService {
 
     const count = await this.repo.countChecklistsByTask(taskId);
     const item = await this.repo.createChecklist(taskId, userId, dto.title, count + 1);
+    await this.repo.createTaskHistories([
+      { taskId, userId, field: 'checklist.created', oldValue: null, newValue: item.title },
+    ]);
     this.logger.info({ projectId, taskId, checklistId: item.id, userId }, 'Checklist item created');
     return item;
   }
@@ -603,6 +606,7 @@ export class ProjetoService {
     taskId: string,
     checklistId: string,
     dto: UpdateChecklistDto,
+    userId: string,
   ) {
     const task = await this.repo.findTaskById(taskId, projectId);
     if (!task) throw new NotFoundException('Task não encontrada');
@@ -611,11 +615,39 @@ export class ProjetoService {
     if (!item) throw new NotFoundException('Item não encontrado');
 
     const updated = await this.repo.updateChecklist(checklistId, dto);
+
+    const entries: {
+      taskId: string;
+      userId: string;
+      field: string;
+      oldValue: string | null;
+      newValue: string | null;
+    }[] = [];
+    if (dto.title !== undefined && dto.title !== item.title) {
+      entries.push({
+        taskId,
+        userId,
+        field: 'checklist.renamed',
+        oldValue: item.title,
+        newValue: updated.title,
+      });
+    }
+    if (dto.completed !== undefined && dto.completed !== item.completed) {
+      entries.push({
+        taskId,
+        userId,
+        field: dto.completed ? 'checklist.completed' : 'checklist.uncompleted',
+        oldValue: null,
+        newValue: updated.title,
+      });
+    }
+    if (entries.length > 0) await this.repo.createTaskHistories(entries);
+
     this.logger.info({ projectId, taskId, checklistId }, 'Checklist item updated');
     return updated;
   }
 
-  async deleteChecklist(projectId: string, taskId: string, checklistId: string) {
+  async deleteChecklist(projectId: string, taskId: string, checklistId: string, userId: string) {
     const task = await this.repo.findTaskById(taskId, projectId);
     if (!task) throw new NotFoundException('Task não encontrada');
 
@@ -623,7 +655,10 @@ export class ProjetoService {
     if (!item) throw new NotFoundException('Item não encontrado');
 
     await this.repo.softDeleteChecklist(checklistId);
-    this.logger.info({ projectId, taskId, checklistId }, 'Checklist item soft-deleted');
+    await this.repo.createTaskHistories([
+      { taskId, userId, field: 'checklist.deleted', oldValue: item.title, newValue: null },
+    ]);
+    this.logger.info({ projectId, taskId, checklistId, userId }, 'Checklist item soft-deleted');
   }
 
   async reorderChecklists(projectId: string, taskId: string, dto: ReorderChecklistDto) {

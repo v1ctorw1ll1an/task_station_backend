@@ -367,8 +367,9 @@ export class ProjetoController {
     @Param('taskId') taskId: string,
     @Param('checklistId') checklistId: string,
     @Body() dto: UpdateChecklistDto,
+    @CurrentUser() user: AuthUser,
   ) {
-    return this.projetoService.updateChecklist(projectId, taskId, checklistId, dto);
+    return this.projetoService.updateChecklist(projectId, taskId, checklistId, dto, user.id);
   }
 
   @Delete('tasks/:taskId/checklists/:checklistId')
@@ -379,8 +380,9 @@ export class ProjetoController {
     @Param('projectId') projectId: string,
     @Param('taskId') taskId: string,
     @Param('checklistId') checklistId: string,
+    @CurrentUser() user: AuthUser,
   ) {
-    await this.projetoService.deleteChecklist(projectId, taskId, checklistId);
+    await this.projetoService.deleteChecklist(projectId, taskId, checklistId, user.id);
   }
 
   @Patch('tasks/:taskId/checklists/reorder')

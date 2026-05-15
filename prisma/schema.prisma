@@ -122,6 +122,7 @@ model User {
   stickyNotes         StickyNote[]
   ownedEvents         CalendarEvent[]         @relation("CalendarEventOwner")
   eventAttendees      CalendarEventAttendee[]
+  invitedTaskGuests   TaskGuest[]             @relation("TaskGuestInvitedBy")
 
   @@index([deletedAt])
   @@map("users")
@@ -242,6 +243,7 @@ model Task {
   taskSessions    TaskSession[]
   stickyNoteLinks StickyNoteTaskLink[]
   calendarEvents  CalendarEvent[]
+  taskGuests      TaskGuest[]
 
   @@unique([projectId, taskNumber])
   @@index([columnId, order])
@@ -340,14 +342,16 @@ model PasswordResetToken {
 model TaskHistory {
   id        String   @id @default(uuid())
   taskId    String   @map("task_id")
-  userId    String   @map("user_id")
+  userId    String?  @map("user_id")
+  guestId   String?  @map("guest_id")
   field     String
   oldValue  String?  @map("old_value")
   newValue  String?  @map("new_value")
   changedAt DateTime @default(now()) @map("changed_at")
 
-  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task  Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user  User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  guest TaskGuest? @relation(fields: [guestId], references: [id], onDelete: SetNull)
 
   @@index([taskId])
   @@index([changedAt])
@@ -635,4 +639,27 @@ model CalendarEventException {
 
   @@unique([eventId, originalDate])
   @@map("calendar_event_exceptions")
+}
+
+model TaskGuest {
+  id             String    @id @default(uuid())
+  taskId         String    @map("task_id")
+  name           String
+  phoneE164      String    @map("phone_e164")
+  email          String?
+  tokenHash      String    @unique @map("token_hash")
+  invitedById    String    @map("invited_by")
+  invitedAt      DateTime  @default(now()) @map("invited_at")
+  lastAccessedAt DateTime? @map("last_accessed_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  task        Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  invitedBy   User          @relation("TaskGuestInvitedBy", fields: [invitedById], references: [id])
+  taskHistory TaskHistory[]
+
+  @@index([taskId, deletedAt])
+  @@index([tokenHash])
+  @@map("task_guests")
 }

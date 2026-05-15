@@ -21,6 +21,7 @@ import { UploadModule } from './upload/upload.module';
 import { TaskSessionModule } from './task-session/task-session.module';
 import { StickyNotesModule } from './sticky-notes/sticky-notes.module';
 import { EventoModule } from './evento/evento.module';
+import { TaskGuestModule } from './task-guest/task-guest.module';
 
 @Module({
   imports: [
@@ -98,6 +99,7 @@ import { EventoModule } from './evento/evento.module';
     TaskSessionModule,
     StickyNotesModule,
     EventoModule,
+    TaskGuestModule,
   ],
   providers: [
     {
