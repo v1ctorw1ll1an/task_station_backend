@@ -231,7 +231,7 @@ describe('ReminderDispatcherService.tick', () => {
     });
     expect(logger.error).toHaveBeenCalledWith(
       expect.objectContaining({ reminderId: 'r-1', to: 'owner@x.com' }),
-      'Falha ao enviar email — registro removido para retry',
+      'Falha ao despachar reminder — registro removido para retry',
     );
   });
 

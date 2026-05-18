@@ -81,9 +81,18 @@ function makeService(repo: jest.Mocked<ProjetoRepository>) {
     error: jest.fn(),
     debug: jest.fn(),
   };
-  const kanbanGateway = { emitToProject: jest.fn() } as never;
+  const kanbanGateway = {
+    emitToProject: jest.fn(),
+    emitToWorkspace: jest.fn(),
+    emitToCompany: jest.fn(),
+  } as never;
   const notificacaoService = { notificar: jest.fn() } as never;
-  const prismaService = {} as never;
+  const prismaService = {
+    taskSession: {
+      findMany: jest.fn().mockResolvedValue([]),
+      update: jest.fn(),
+    },
+  } as never;
   const service = new ProjetoService(
     repo,
     kanbanGateway,
