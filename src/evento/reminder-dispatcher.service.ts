@@ -3,15 +3,21 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { rrulestr } from 'rrule';
 import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
-import { ReminderMethod } from '../generated/prisma/client';
+import { NotificationType, ReminderMethod } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailerService } from '../mailer/mailer.service';
+import { NotificacaoService } from '../notificacao/notificacao.service';
 
 interface PendingReminder {
   reminderId: string;
+  method: ReminderMethod;
   /** ID do user (owner ou attendee) ou prefixo "guest:" + email para externos */
   recipientId: string;
+  /** Apenas para method=email. Para notification, sempre é um user real (sem guest). */
   recipientEmail: string;
+  /** ID real do User quando recipient é um user (não guest:) — null para guest emails. */
+  recipientUserId: string | null;
+  eventId: string;
   eventTitle: string;
   eventLocation: string | null;
   eventDescription: string | null;
@@ -33,6 +39,7 @@ export class ReminderDispatcherService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mailer: MailerService,
+    private readonly notificacao: NotificacaoService,
     @InjectPinoLogger(ReminderDispatcherService.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -72,7 +79,7 @@ export class ReminderDispatcherService {
     const events = await this.prisma.calendarEvent.findMany({
       where: {
         deletedAt: null,
-        reminders: { some: { method: ReminderMethod.email } },
+        reminders: { some: {} },
         // Pode ser série recorrente OU evento simples futuro
         OR: [
           { rrule: null, startsAt: { gte: now, lte: horizonEnd } },
@@ -84,7 +91,7 @@ export class ReminderDispatcherService {
         ],
       },
       include: {
-        reminders: { where: { method: ReminderMethod.email } },
+        reminders: true,
         attendees: {
           where: { status: { in: ['accepted', 'tentative', 'invited'] } },
           include: { user: { select: { id: true, email: true } } },
@@ -115,23 +122,58 @@ export class ReminderDispatcherService {
 
         for (const reminder of ev.reminders) {
           const triggerAt = new Date(start.getTime() - reminder.minutesBefore * 60_000);
-          if (triggerAt < now || triggerAt > windowEnd) continue;
+          // - triggerAt > windowEnd: ainda não é hora.
+          // - start <= now: a ocorrência já começou (ou já passou) — não dispara backfill.
+          //   Triggers no passado (mas com a ocorrência ainda no futuro) DISPARAM. Idempotência
+          //   via CalendarEventReminderSent garante que não duplica.
+          if (triggerAt > windowEnd) continue;
+          if (start <= now) continue;
 
-          // Destinatários: owner + attendees + guest emails externos
-          const recipients = new Map<string, string>();
-          if (ev.owner.email) recipients.set(ev.owner.id, ev.owner.email);
+          // Destinatários: owner + attendees + (apenas para email) guest emails externos.
+          // Para method=notification, guests externos não recebem (não têm conta no sistema).
+          interface RecipientEntry {
+            recipientId: string;
+            recipientEmail: string;
+            recipientUserId: string | null;
+          }
+          const recipients = new Map<string, RecipientEntry>();
+          if (ev.owner.email) {
+            recipients.set(ev.owner.id, {
+              recipientId: ev.owner.id,
+              recipientEmail: ev.owner.email,
+              recipientUserId: ev.owner.id,
+            });
+          }
           for (const a of ev.attendees) {
-            if (a.user?.email) recipients.set(a.user.id, a.user.email);
+            if (a.user?.email) {
+              recipients.set(a.user.id, {
+                recipientId: a.user.id,
+                recipientEmail: a.user.email,
+                recipientUserId: a.user.id,
+              });
+            }
           }
-          for (const g of ev.guestEmails) {
-            if (g.email) recipients.set(`guest:${g.email.toLowerCase()}`, g.email);
+          if (reminder.method === ReminderMethod.email) {
+            for (const g of ev.guestEmails) {
+              if (g.email) {
+                const key = `guest:${g.email.toLowerCase()}`;
+                recipients.set(key, {
+                  recipientId: key,
+                  recipientEmail: g.email,
+                  recipientUserId: null,
+                });
+              }
+            }
           }
 
-          for (const [recipientId, recipientEmail] of recipients) {
+          for (const entry of recipients.values()) {
             result.push({
               reminderId: reminder.id,
-              recipientId,
-              recipientEmail,
+              method: reminder.method,
+              recipientId: entry.recipientId,
+              recipientEmail: entry.recipientEmail,
+              recipientUserId: entry.recipientUserId,
+              eventId: ev.id,
               eventTitle: title,
               eventLocation: location,
               eventDescription: description,
@@ -224,16 +266,43 @@ export class ReminderDispatcherService {
     }
 
     try {
-      await this.mailer.sendEventReminderEmail({
-        to: item.recipientEmail,
-        title: item.eventTitle,
-        startsAt: item.occurrenceStart,
-        endsAt: item.occurrenceEnd,
-        location: item.eventLocation,
-        description: item.eventDescription,
-        minutesBefore: item.minutesBefore,
-        timezone: item.eventTimezone,
-      });
+      if (item.method === ReminderMethod.email) {
+        await this.mailer.sendEventReminderEmail({
+          to: item.recipientEmail,
+          title: item.eventTitle,
+          startsAt: item.occurrenceStart,
+          endsAt: item.occurrenceEnd,
+          location: item.eventLocation,
+          description: item.eventDescription,
+          minutesBefore: item.minutesBefore,
+          timezone: item.eventTimezone,
+        });
+      } else {
+        // method=notification: persiste Notification e emite WS
+        if (!item.recipientUserId) return; // sem user real (guest) — ignora
+        const whenStr = formatInTimeZone(
+          item.occurrenceStart,
+          item.eventTimezone,
+          "dd/MM 'às' HH:mm",
+        );
+        const body =
+          item.minutesBefore === 0
+            ? `Começa agora (${whenStr})`
+            : `Começa em ${item.minutesBefore} min (${whenStr})`;
+        await this.notificacao.notify({
+          type: NotificationType.EVENT_REMINDER,
+          recipientId: item.recipientUserId,
+          title: item.eventTitle,
+          body,
+          metadata: {
+            eventId: item.eventId,
+            occurrenceStart: item.occurrenceStart.toISOString(),
+            occurrenceEnd: item.occurrenceEnd.toISOString(),
+            minutesBefore: item.minutesBefore,
+            location: item.eventLocation,
+          },
+        });
+      }
     } catch (err) {
       // Falha no envio: remove o registro pra que o próximo tick tente de novo
       await this.prisma.calendarEventReminderSent
@@ -246,8 +315,13 @@ export class ReminderDispatcherService {
         })
         .catch(() => undefined);
       this.logger.error(
-        { err: (err as Error).message, reminderId: item.reminderId, to: item.recipientEmail },
-        'Falha ao enviar email — registro removido para retry',
+        {
+          err: (err as Error).message,
+          reminderId: item.reminderId,
+          method: item.method,
+          to: item.recipientEmail,
+        },
+        'Falha ao despachar reminder — registro removido para retry',
       );
     }
   }

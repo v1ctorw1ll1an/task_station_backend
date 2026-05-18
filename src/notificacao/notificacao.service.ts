@@ -22,6 +22,7 @@ const PREF_KEY_MAP: Record<NotificationType, string> = {
   TASK_ASSIGNED: 'taskAssigned',
   TASK_COMMENT: 'taskComment',
   TASK_UPDATED: 'taskUpdated',
+  EVENT_REMINDER: 'eventReminder',
 };
 
 const BROADCAST_CHUNK_SIZE = 500;

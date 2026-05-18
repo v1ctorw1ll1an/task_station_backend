@@ -474,8 +474,61 @@ export class ProjetoService {
       throw new NotFoundException('Task não encontrada');
     }
 
+    const activeSessions = await this.prisma.taskSession.findMany({
+      where: { taskId, status: { in: ['running', 'paused'] } },
+      include: {
+        task: {
+          select: {
+            project: {
+              select: {
+                id: true,
+                workspaceId: true,
+                workspace: { select: { companyId: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const now = new Date();
+    for (const session of activeSessions) {
+      const elapsed =
+        session.status === 'running' && session.resumedAt
+          ? Math.floor((now.getTime() - session.resumedAt.getTime()) / 1000)
+          : 0;
+      const newTotal = session.totalSeconds + elapsed;
+
+      await this.prisma.taskSession.update({
+        where: { id: session.id },
+        data: { status: 'stopped', stoppedAt: now, totalSeconds: newTotal },
+      });
+
+      const companyIdStop = session.task.project.workspace.companyId;
+      const payload = {
+        sessionId: session.id,
+        taskId: session.taskId,
+        projectId: session.task.project.id,
+        workspaceId: session.task.project.workspaceId,
+        companyId: companyIdStop,
+        userId: session.userId,
+        totalSeconds: newTotal,
+        status: 'stopped' as const,
+      };
+      this.kanbanGateway.emitToProject(session.task.project.id, 'taskSession:stopped', payload);
+      this.kanbanGateway.emitToWorkspace(
+        session.task.project.workspaceId,
+        'taskSession:stopped',
+        payload,
+      );
+      this.kanbanGateway.emitToCompany(companyIdStop, 'taskSession:stopped', payload);
+    }
+
     await this.repo.softDeleteTask(taskId);
-    this.logger.info({ projectId, taskId, performedById }, 'Task soft-deleted');
+    this.logger.info(
+      { projectId, taskId, performedById, stoppedSessions: activeSessions.length },
+      'Task soft-deleted',
+    );
     this.kanbanGateway.emitToProject(projectId, 'task:deleted', {
       taskId,
       columnId: task.columnId,

@@ -1,5 +1,6 @@
 import { ReminderMethod } from '../generated/prisma/client';
 import { MailerService } from '../mailer/mailer.service';
+import { NotificacaoService } from '../notificacao/notificacao.service';
 import { ReminderDispatcherService } from './reminder-dispatcher.service';
 
 // ── helpers ────────────────────────────────────────────────────────────────────
@@ -22,6 +23,12 @@ function makeMailer(): jest.Mocked<MailerService> {
   return {
     sendEventReminderEmail: jest.fn().mockResolvedValue(undefined),
   } as unknown as jest.Mocked<MailerService>;
+}
+
+function makeNotificacao(): jest.Mocked<NotificacaoService> {
+  return {
+    notify: jest.fn().mockResolvedValue(undefined),
+  } as unknown as jest.Mocked<NotificacaoService>;
 }
 
 function makeEvent(overrides: Record<string, unknown> = {}) {
@@ -63,7 +70,12 @@ describe('ReminderDispatcherService.tick', () => {
     const findMany = jest.fn().mockResolvedValue([]);
     const prisma = makePrisma(findMany);
     const mailer = makeMailer();
-    const service = new ReminderDispatcherService(prisma, mailer, makeLogger() as any);
+    const service = new ReminderDispatcherService(
+      prisma,
+      mailer,
+      makeNotificacao(),
+      makeLogger() as any,
+    );
 
     await service.tick();
 
@@ -76,7 +88,12 @@ describe('ReminderDispatcherService.tick', () => {
     const ev = makeEvent();
     const prisma = makePrisma(jest.fn().mockResolvedValue([ev]));
     const mailer = makeMailer();
-    const service = new ReminderDispatcherService(prisma, mailer, makeLogger() as any);
+    const service = new ReminderDispatcherService(
+      prisma,
+      mailer,
+      makeNotificacao(),
+      makeLogger() as any,
+    );
 
     await service.tick();
 
@@ -104,7 +121,12 @@ describe('ReminderDispatcherService.tick', () => {
     });
     const prisma = makePrisma(jest.fn().mockResolvedValue([ev]));
     const mailer = makeMailer();
-    const service = new ReminderDispatcherService(prisma, mailer, makeLogger() as any);
+    const service = new ReminderDispatcherService(
+      prisma,
+      mailer,
+      makeNotificacao(),
+      makeLogger() as any,
+    );
 
     await service.tick();
 
@@ -129,7 +151,12 @@ describe('ReminderDispatcherService.tick', () => {
     });
     const prisma = makePrisma(jest.fn().mockResolvedValue([ev]));
     const mailer = makeMailer();
-    const service = new ReminderDispatcherService(prisma, mailer, makeLogger() as any);
+    const service = new ReminderDispatcherService(
+      prisma,
+      mailer,
+      makeNotificacao(),
+      makeLogger() as any,
+    );
 
     await service.tick();
 
@@ -144,7 +171,12 @@ describe('ReminderDispatcherService.tick', () => {
     });
     const prisma = makePrisma(jest.fn().mockResolvedValue([ev]));
     const mailer = makeMailer();
-    const service = new ReminderDispatcherService(prisma, mailer, makeLogger() as any);
+    const service = new ReminderDispatcherService(
+      prisma,
+      mailer,
+      makeNotificacao(),
+      makeLogger() as any,
+    );
 
     await service.tick();
 
@@ -159,7 +191,7 @@ describe('ReminderDispatcherService.tick', () => {
     prisma.calendarEventReminderSent.create.mockRejectedValue(p2002);
     const mailer = makeMailer();
     const logger = makeLogger();
-    const service = new ReminderDispatcherService(prisma, mailer, logger as any);
+    const service = new ReminderDispatcherService(prisma, mailer, makeNotificacao(), logger as any);
 
     await service.tick();
 
@@ -173,7 +205,7 @@ describe('ReminderDispatcherService.tick', () => {
     prisma.calendarEventReminderSent.create.mockRejectedValue(new Error('boom'));
     const mailer = makeMailer();
     const logger = makeLogger();
-    const service = new ReminderDispatcherService(prisma, mailer, logger as any);
+    const service = new ReminderDispatcherService(prisma, mailer, makeNotificacao(), logger as any);
 
     await service.tick();
 
@@ -190,7 +222,7 @@ describe('ReminderDispatcherService.tick', () => {
     const mailer = makeMailer();
     mailer.sendEventReminderEmail.mockRejectedValue(new Error('smtp down'));
     const logger = makeLogger();
-    const service = new ReminderDispatcherService(prisma, mailer, logger as any);
+    const service = new ReminderDispatcherService(prisma, mailer, makeNotificacao(), logger as any);
 
     await service.tick();
 
@@ -207,7 +239,7 @@ describe('ReminderDispatcherService.tick', () => {
     const prisma = makePrisma(jest.fn().mockRejectedValue(new Error('db down')));
     const mailer = makeMailer();
     const logger = makeLogger();
-    const service = new ReminderDispatcherService(prisma, mailer, logger as any);
+    const service = new ReminderDispatcherService(prisma, mailer, makeNotificacao(), logger as any);
 
     await expect(service.tick()).resolves.toBeUndefined();
     expect(logger.error).toHaveBeenCalledWith(
@@ -233,7 +265,12 @@ describe('ReminderDispatcherService.tick', () => {
     });
     const prisma = makePrisma(jest.fn().mockResolvedValue([ev]));
     const mailer = makeMailer();
-    const service = new ReminderDispatcherService(prisma, mailer, makeLogger() as any);
+    const service = new ReminderDispatcherService(
+      prisma,
+      mailer,
+      makeNotificacao(),
+      makeLogger() as any,
+    );
 
     await service.tick();
 

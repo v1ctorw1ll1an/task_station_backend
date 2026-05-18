@@ -48,6 +48,7 @@ enum NotificationType {
   TASK_ASSIGNED
   TASK_COMMENT
   TASK_UPDATED
+  EVENT_REMINDER
 
   @@map("notification_type")
 }
@@ -437,14 +438,18 @@ model Notification {
 }
 
 model NotificationPreference {
-  id             String   @id @default(uuid())
-  userId         String   @unique @map("user_id")
-  adminBroadcast Boolean  @default(true) @map("admin_broadcast")
-  mention        Boolean  @default(true)
-  taskAssigned   Boolean  @default(true) @map("task_assigned")
-  taskComment    Boolean  @default(true) @map("task_comment")
-  taskUpdated    Boolean  @default(true) @map("task_updated")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  id                    String   @id @default(uuid())
+  userId                String   @unique @map("user_id")
+  adminBroadcast        Boolean  @default(true) @map("admin_broadcast")
+  mention               Boolean  @default(true)
+  taskAssigned          Boolean  @default(true) @map("task_assigned")
+  taskComment           Boolean  @default(true) @map("task_comment")
+  taskUpdated           Boolean  @default(true) @map("task_updated")
+  eventReminder         Boolean  @default(true) @map("event_reminder")
+  eventReminderSound    Boolean  @default(true) @map("event_reminder_sound")
+  eventReminderPopup    Boolean  @default(true) @map("event_reminder_popup")
+  eventReminderBrowser  Boolean  @default(true) @map("event_reminder_browser")
+  updatedAt             DateTime @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

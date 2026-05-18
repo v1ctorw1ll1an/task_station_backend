@@ -20,4 +20,20 @@ export class UpdatePreferenceDto {
   @IsOptional()
   @IsBoolean()
   taskUpdated?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  eventReminder?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  eventReminderSound?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  eventReminderPopup?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  eventReminderBrowser?: boolean;
 }
