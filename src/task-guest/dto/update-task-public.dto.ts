@@ -21,7 +21,7 @@ export class UpdateTaskPublicDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  @MaxLength(20_000)
+  @MaxLength(5000)
   description?: string | null;
 
   @ApiPropertyOptional({ enum: TaskPriority })

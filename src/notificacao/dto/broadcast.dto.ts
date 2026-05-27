@@ -1,14 +1,15 @@
 import { IsArray, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import { FREE } from '../../common/limits';
 
 export class BroadcastDto {
   @IsString()
   @MinLength(1)
-  @MaxLength(200)
+  @MaxLength(FREE.broadcastTitle)
   title: string;
 
   @IsString()
   @MinLength(1)
-  @MaxLength(10000)
+  @MaxLength(FREE.broadcastBody)
   body: string;
 
   @IsOptional()
@@ -24,12 +25,12 @@ export class BroadcastDto {
 export class CompanyBroadcastDto {
   @IsString()
   @MinLength(1)
-  @MaxLength(200)
+  @MaxLength(FREE.broadcastTitle)
   title: string;
 
   @IsString()
   @MinLength(1)
-  @MaxLength(10000)
+  @MaxLength(FREE.broadcastBody)
   body: string;
 
   @IsOptional()

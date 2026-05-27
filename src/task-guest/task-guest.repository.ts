@@ -9,6 +9,7 @@ export interface CreateTaskGuestData {
   email: string | null;
   tokenHash: string;
   invitedById: string;
+  expiresAt: Date | null;
 }
 
 @Injectable()
@@ -31,7 +32,21 @@ export class TaskGuestRepository {
         email: data.email,
         tokenHash: data.tokenHash,
         invitedById: data.invitedById,
+        expiresAt: data.expiresAt,
       },
+    });
+  }
+
+  extendGuestExpiration(guestId: string, expiresAt: Date | null) {
+    return this.prisma.taskGuest.update({
+      where: { id: guestId },
+      data: { expiresAt },
+    });
+  }
+
+  countActiveGuestsByTask(taskId: string): Promise<number> {
+    return this.prisma.taskGuest.count({
+      where: { taskId, deletedAt: null },
     });
   }
 
@@ -45,6 +60,7 @@ export class TaskGuestRepository {
         phoneE164: true,
         email: true,
         invitedAt: true,
+        expiresAt: true,
         lastAccessedAt: true,
       },
     });
@@ -70,6 +86,7 @@ export class TaskGuestRepository {
       select: {
         id: true,
         taskId: true,
+        expiresAt: true,
         task: {
           select: {
             id: true,

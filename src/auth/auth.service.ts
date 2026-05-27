@@ -17,6 +17,12 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
 import { AuthRepository } from './auth.repository';
 
+// Hash dummy usado para neutralizar timing attack quando o email não existe.
+// É um bcrypt válido de uma senha aleatória de 64 bytes — bcrypt.compare leva
+// o mesmo tempo (~custo 10) que um hash real, mas nunca bate com nada.
+// Pré-computado para evitar custo de geração no boot.
+const DUMMY_BCRYPT_HASH = '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy';
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -31,12 +37,18 @@ export class AuthService {
   async validateUser(email: string, password: string) {
     const user = await this.repo.findActiveUserByEmail(email);
 
+    // Constant-time login: roda bcrypt mesmo quando o usuário não existe,
+    // contra hash dummy. Sem isso, o tempo de resposta vaza a existência
+    // do email (timing attack → enumeração).
     if (!user) {
+      await bcrypt.compare(password, DUMMY_BCRYPT_HASH);
       this.logger.warn({ email }, 'Login attempt for unknown email');
       return null;
     }
 
     if (!user.isActive) {
+      // Também consome bcrypt para igualar timing com usuário válido + senha errada.
+      await bcrypt.compare(password, user.passwordHash);
       this.logger.warn({ userId: user.id, email }, 'Login attempt for inactive user');
       throw new UnauthorizedException('Usuário inativo');
     }

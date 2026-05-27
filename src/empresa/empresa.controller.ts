@@ -13,6 +13,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthUser } from '../auth/strategies/jwt.strategy';
 import { CompanyAdminGuard } from './guards/company-admin.guard';
@@ -23,6 +24,7 @@ import { ListMembersQueryDto } from './dto/list-members-query.dto';
 import { ListWorkspacesQueryDto } from './dto/list-workspaces-query.dto';
 import { CompanyBroadcastDto } from '../notificacao/dto/broadcast.dto';
 import { PromoteMemberDto } from './dto/promote-member.dto';
+import { UpdateStorageQuotaDto } from './dto/update-storage-quota.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 
 @ApiTags('empresa')
@@ -72,6 +74,22 @@ export class EmpresaController {
     @Body() dto: UpdateWorkspaceDto,
   ) {
     return this.empresaService.updateWorkspace(companyId, workspaceId, dto);
+  }
+
+  @Patch('workspaces/:workspaceId/storage-quota')
+  @ApiOperation({ summary: 'Atualiza a cota de armazenamento do workspace (admin)' })
+  @ApiResponse({ status: 200, description: 'Cota atualizada' })
+  @ApiResponse({ status: 404, description: 'Workspace não encontrado' })
+  updateStorageQuota(
+    @Param('companyId') companyId: string,
+    @Param('workspaceId') workspaceId: string,
+    @Body() dto: UpdateStorageQuotaDto,
+  ) {
+    return this.empresaService.updateWorkspaceStorageQuota(
+      companyId,
+      workspaceId,
+      dto.storageQuotaBytes,
+    );
   }
 
   @Patch('workspaces/:workspaceId/inativar')
@@ -361,6 +379,7 @@ export class EmpresaController {
 
   // ── Broadcast ─────────────────────────────────────────────────────────────────
 
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('broadcast')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({

@@ -1,15 +1,17 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class UpdateWorkspaceDto {
   @ApiPropertyOptional({ example: 'Desenvolvimento v2' })
   @IsOptional()
   @IsString()
-  @IsNotEmpty()
+  @MinLength(1)
+  @MaxLength(120)
   name?: string;
 
   @ApiPropertyOptional({ example: 'Workspace atualizado' })
   @IsOptional()
   @IsString()
+  @MaxLength(2000)
   description?: string;
 }

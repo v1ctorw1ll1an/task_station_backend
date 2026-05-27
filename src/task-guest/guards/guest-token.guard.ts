@@ -40,6 +40,14 @@ export class GuestTokenGuard implements CanActivate {
       throw new NotFoundException('Link inválido');
     }
 
+    if (guest.expiresAt && guest.expiresAt.getTime() < Date.now()) {
+      this.logger.warn(
+        { tokenHashPrefix: tokenHash.slice(0, 8), guestId: guest.id },
+        'Tentativa de acesso com token expirado',
+      );
+      throw new NotFoundException('Link expirado');
+    }
+
     request.guestContext = {
       guestId: guest.id,
       taskId: guest.taskId,

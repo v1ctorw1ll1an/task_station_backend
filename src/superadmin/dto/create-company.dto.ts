@@ -1,15 +1,17 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsEmail, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class CreateCompanyDto {
   @ApiProperty({ example: 'Acme Ltda' })
   @IsString()
-  @IsNotEmpty()
+  @MinLength(1)
+  @MaxLength(120)
   legalName: string;
 
   @ApiProperty({ example: '12345678000199', description: 'CNPJ (somente números)' })
   @IsString()
-  @IsNotEmpty()
+  @MinLength(11)
+  @MaxLength(18)
   taxId: string;
 
   @ApiPropertyOptional({
@@ -18,9 +20,12 @@ export class CreateCompanyDto {
   })
   @IsOptional()
   @IsString()
+  @MinLength(2)
+  @MaxLength(120)
   adminName?: string;
 
   @ApiProperty({ example: 'admin@acme.com' })
   @IsEmail()
+  @MaxLength(254)
   adminEmail: string;
 }

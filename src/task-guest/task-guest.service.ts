@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
+import { FREE } from '../common/limits';
 import { Prisma } from '../generated/prisma/client';
 import { CreateGuestDto } from './dto/create-guest.dto';
 import { UpdateTaskPublicDto } from './dto/update-task-public.dto';
@@ -14,6 +15,7 @@ export interface CreateGuestResult {
     phoneE164: string;
     email: string | null;
     invitedAt: Date;
+    expiresAt: Date | null;
   };
   publicUrl: string;
   whatsappUrl: string;
@@ -21,6 +23,7 @@ export interface CreateGuestResult {
 
 const E164_REGEX = /^\+[1-9]\d{7,14}$/;
 const WA_MESSAGE_MAX = 1800;
+const DEFAULT_GUEST_TTL_DAYS = 30;
 
 @Injectable()
 export class TaskGuestService {
@@ -43,8 +46,20 @@ export class TaskGuestService {
       throw new NotFoundException('Task não encontrada');
     }
 
+    // Cap de guests/task — anti-abuso de enumeração de telefones e
+    // spam por WhatsApp via wa.me links.
+    const existingGuests = await this.repo.countActiveGuestsByTask(taskId);
+    if (existingGuests >= FREE.guestsPerTask) {
+      throw new BadRequestException(
+        `Limite de ${FREE.guestsPerTask} convidados por task atingido.`,
+      );
+    }
+
     const rawToken = crypto.randomBytes(32).toString('base64url');
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+    const ttlDays =
+      this.configService.get<number>('GUEST_TOKEN_TTL_DAYS') ?? DEFAULT_GUEST_TTL_DAYS;
+    const expiresAt = ttlDays > 0 ? new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000) : null;
 
     const guest = await this.repo.createGuest({
       taskId,
@@ -53,6 +68,7 @@ export class TaskGuestService {
       email: dto.email ?? null,
       tokenHash,
       invitedById,
+      expiresAt,
     });
 
     const publicUrl = this.buildPublicUrl(rawToken);
@@ -75,10 +91,20 @@ export class TaskGuestService {
         phoneE164,
         email: dto.email ?? null,
         invitedAt: guest.invitedAt,
+        expiresAt: guest.expiresAt,
       },
       publicUrl,
       whatsappUrl,
     };
+  }
+
+  async extendGuest(guestId: string, days = DEFAULT_GUEST_TTL_DAYS) {
+    const guest = await this.repo.findActiveGuestById(guestId);
+    if (!guest) {
+      throw new NotFoundException('Convidado não encontrado');
+    }
+    const expiresAt = days > 0 ? new Date(Date.now() + days * 24 * 60 * 60 * 1000) : null;
+    return this.repo.extendGuestExpiration(guestId, expiresAt);
   }
 
   async searchGuests(projectId: string, q: string) {

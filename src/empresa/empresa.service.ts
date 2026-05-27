@@ -102,6 +102,25 @@ export class EmpresaService {
     return updated;
   }
 
+  async updateWorkspaceStorageQuota(
+    companyId: string,
+    workspaceId: string,
+    storageQuotaBytes: number,
+  ) {
+    const workspace = await this.repo.findWorkspaceById(workspaceId, companyId);
+    if (!workspace) {
+      throw new NotFoundException('Workspace não encontrado');
+    }
+    const updated = await this.repo.updateWorkspace(workspaceId, {
+      storageQuotaBytes: BigInt(storageQuotaBytes),
+    });
+    this.logger.info(
+      { companyId, workspaceId, storageQuotaBytes },
+      'Workspace storage quota updated',
+    );
+    return updated;
+  }
+
   async deactivateWorkspace(companyId: string, workspaceId: string) {
     const workspace = await this.repo.findWorkspaceById(workspaceId, companyId);
 

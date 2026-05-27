@@ -1,4 +1,5 @@
 import {
+  ArrayMaxSize,
   IsArray,
   IsDateString,
   IsEnum,
@@ -9,17 +10,19 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { FREE } from '../../common/limits';
 import { TaskPriority } from '../../generated/prisma/client';
 
 export class UpdateTaskDto {
   @IsOptional()
   @IsString()
   @MinLength(1)
-  @MaxLength(255)
+  @MaxLength(FREE.taskTitle)
   title?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(FREE.taskDescription)
   description?: string;
 
   @IsOptional()
@@ -28,6 +31,7 @@ export class UpdateTaskDto {
 
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(50)
   @IsUUID('4', { each: true, message: 'ID do responsável inválido' })
   assigneeIds?: string[];
 
@@ -41,6 +45,7 @@ export class UpdateTaskDto {
 
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(50)
   @IsUUID('4', { each: true })
   labelIds?: string[];
 

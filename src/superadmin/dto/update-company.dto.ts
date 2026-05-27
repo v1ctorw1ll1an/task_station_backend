@@ -1,16 +1,18 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class UpdateCompanyDto {
   @ApiPropertyOptional({ example: 'Acme S.A.' })
   @IsOptional()
   @IsString()
-  @IsNotEmpty()
+  @MinLength(1)
+  @MaxLength(120)
   legalName?: string;
 
   @ApiPropertyOptional({ example: '98765432000100' })
   @IsOptional()
   @IsString()
-  @IsNotEmpty()
+  @MinLength(11)
+  @MaxLength(18)
   taxId?: string;
 }

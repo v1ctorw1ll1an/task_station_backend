@@ -44,6 +44,7 @@ import { UpdateCommentDto } from './dto/update-comment.dto';
 import { CreateChecklistDto } from './dto/create-checklist.dto';
 import { UpdateChecklistDto } from './dto/update-checklist.dto';
 import { ReorderChecklistDto } from './dto/reorder-checklist.dto';
+import { ListTaskHistoryQueryDto } from './dto/list-task-history-query.dto';
 
 @ApiTags('projetos')
 @ApiBearerAuth()
@@ -118,6 +119,7 @@ export class ProjetoController {
 
   @Patch('colunas/reorder')
   @UseGuards(ProjetoAdminGuard)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @ApiOperation({ summary: 'Reordenar colunas do projeto' })
   @ApiResponse({ status: 200, description: 'Colunas reordenadas' })
   reorderColunas(
@@ -242,11 +244,20 @@ export class ProjetoController {
   }
 
   @Get('tasks/:taskId/history')
-  @ApiOperation({ summary: 'Histórico de alterações da task' })
+  @ApiOperation({ summary: 'Histórico de alterações da task (paginado)' })
   @ApiResponse({ status: 200, description: 'Histórico retornado com sucesso' })
   @ApiResponse({ status: 404, description: 'Task não encontrada' })
-  getTaskHistory(@Param('projectId') projectId: string, @Param('taskId') taskId: string) {
-    return this.projetoService.getTaskHistory(projectId, taskId);
+  getTaskHistory(
+    @Param('projectId') projectId: string,
+    @Param('taskId') taskId: string,
+    @Query() query: ListTaskHistoryQueryDto,
+  ) {
+    return this.projetoService.getTaskHistory(
+      projectId,
+      taskId,
+      query.page ?? 1,
+      query.limit ?? 20,
+    );
   }
 
   @Patch('tasks/:taskId/assign')
@@ -386,6 +397,7 @@ export class ProjetoController {
   }
 
   @Patch('tasks/:taskId/checklists/reorder')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Reordenar itens do checklist' })
   @ApiResponse({ status: 204, description: 'Ordem salva' })

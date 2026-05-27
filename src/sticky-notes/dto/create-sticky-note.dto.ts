@@ -1,4 +1,13 @@
-import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class CreateStickyNoteDto {
   @IsOptional()
@@ -30,5 +39,7 @@ export class CreateStickyNoteDto {
 
   @IsOptional()
   @IsInt()
+  @Min(0)
+  @Max(9999)
   zIndex?: number;
 }

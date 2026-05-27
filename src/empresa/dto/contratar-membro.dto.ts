@@ -11,6 +11,7 @@ export class ContratarMembroDto {
 
   @IsOptional()
   @IsString()
+  @MinLength(8)
   @MaxLength(20)
   phone?: string;
 }

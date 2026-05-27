@@ -38,6 +38,13 @@ function makeRepo(
     findAttachmentById: jest.fn(),
     findAttachments: jest.fn(),
     softDeleteAttachment: jest.fn().mockResolvedValue(undefined),
+    // Cota de storage por workspace — default: workspace existe e está vazio,
+    // então qualquer upload cabe na cota de 10 GiB.
+    findWorkspaceForTask: jest.fn().mockResolvedValue({
+      workspaceId: 'ws-1',
+      storageQuotaBytes: 10_737_418_240n,
+    }),
+    sumWorkspaceAttachmentBytes: jest.fn().mockResolvedValue(0n),
     ...overrides,
   } as unknown as jest.Mocked<ProjetoRepository>;
 }

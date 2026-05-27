@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsInt, IsUUID, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsInt, IsUUID, Min, ValidateNested } from 'class-validator';
 
 class ChecklistOrderItem {
   @IsUUID('4')
@@ -12,6 +12,7 @@ class ChecklistOrderItem {
 
 export class ReorderChecklistDto {
   @IsArray()
+  @ArrayMaxSize(200)
   @ValidateNested({ each: true })
   @Type(() => ChecklistOrderItem)
   items: ChecklistOrderItem[];

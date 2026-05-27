@@ -1,4 +1,4 @@
-import { IsBoolean, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsHexColor, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class CreateColunaDto {
   @IsString()
@@ -7,8 +7,7 @@ export class CreateColunaDto {
   name: string;
 
   @IsOptional()
-  @IsString()
-  @MaxLength(7)
+  @IsHexColor()
   color?: string;
 
   @IsOptional()

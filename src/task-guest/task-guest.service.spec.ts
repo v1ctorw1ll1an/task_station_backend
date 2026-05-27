@@ -10,6 +10,10 @@ function makeRepo(
   return {
     findActiveTaskById: jest.fn(),
     createGuest: jest.fn(),
+    // Default: zero guests existentes — não bate no cap. Specs que querem
+    // testar o cap fazem override com mockResolvedValue(N).
+    countActiveGuestsByTask: jest.fn().mockResolvedValue(0),
+    extendGuestExpiration: jest.fn(),
     listActiveGuestsByTask: jest.fn(),
     findActiveGuestById: jest.fn(),
     softDeleteGuest: jest.fn(),

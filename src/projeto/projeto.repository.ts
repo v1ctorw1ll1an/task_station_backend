@@ -637,19 +637,26 @@ export class ProjetoRepository {
     return this.prisma.taskHistory.createMany({ data: entries });
   }
 
-  getTaskHistory(taskId: string) {
-    return this.prisma.taskHistory.findMany({
-      where: { taskId },
-      orderBy: { changedAt: 'desc' },
-      select: {
-        id: true,
-        field: true,
-        oldValue: true,
-        newValue: true,
-        changedAt: true,
-        user: { select: { id: true, name: true, email: true, photoUrl: true } },
-      },
-    });
+  async getTaskHistoryPaginated(taskId: string, page: number, limit: number) {
+    const skip = (page - 1) * limit;
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.taskHistory.findMany({
+        where: { taskId },
+        orderBy: { changedAt: 'desc' },
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          field: true,
+          oldValue: true,
+          newValue: true,
+          changedAt: true,
+          user: { select: { id: true, name: true, email: true, photoUrl: true } },
+        },
+      }),
+      this.prisma.taskHistory.count({ where: { taskId } }),
+    ]);
+    return { items, total };
   }
 
   // ── Attachments ────────────────────────────────────────────────────────────
@@ -721,6 +728,34 @@ export class ProjetoRepository {
     return this.prisma.taskAttachment.count({
       where: { taskId, deletedAt: null, mimeType: { startsWith: mimePrefix } },
     });
+  }
+
+  async findWorkspaceForTask(
+    taskId: string,
+  ): Promise<{ workspaceId: string; storageQuotaBytes: bigint } | null> {
+    const task = await this.prisma.task.findFirst({
+      where: { id: taskId, deletedAt: null },
+      select: {
+        project: {
+          select: {
+            workspace: { select: { id: true, storageQuotaBytes: true } },
+          },
+        },
+      },
+    });
+    const ws = task?.project?.workspace;
+    return ws ? { workspaceId: ws.id, storageQuotaBytes: ws.storageQuotaBytes } : null;
+  }
+
+  async sumWorkspaceAttachmentBytes(workspaceId: string): Promise<bigint> {
+    const result = await this.prisma.taskAttachment.aggregate({
+      _sum: { size: true },
+      where: {
+        deletedAt: null,
+        task: { project: { workspaceId } },
+      },
+    });
+    return BigInt(result._sum.size ?? 0);
   }
 
   // ── Transfer ───────────────────────────────────────────────────────────────

@@ -2,7 +2,8 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, HttpAdapterHost } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { UserAwareThrottlerGuard } from './common/guards/user-throttler.guard';
 import { Logger, LoggerModule } from 'nestjs-pino';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
@@ -22,6 +23,7 @@ import { TaskSessionModule } from './task-session/task-session.module';
 import { StickyNotesModule } from './sticky-notes/sticky-notes.module';
 import { EventoModule } from './evento/evento.module';
 import { TaskGuestModule } from './task-guest/task-guest.module';
+import { MaintenanceModule } from './maintenance/maintenance.module';
 
 @Module({
   imports: [
@@ -100,6 +102,7 @@ import { TaskGuestModule } from './task-guest/task-guest.module';
     StickyNotesModule,
     EventoModule,
     TaskGuestModule,
+    MaintenanceModule,
   ],
   providers: [
     {
@@ -108,7 +111,7 @@ import { TaskGuestModule } from './task-guest/task-guest.module';
     },
     {
       provide: APP_GUARD,
-      useClass: ThrottlerGuard,
+      useClass: UserAwareThrottlerGuard,
     },
     {
       provide: APP_FILTER,

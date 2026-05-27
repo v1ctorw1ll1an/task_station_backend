@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
+import { FREE } from '../common/limits';
 import { Prisma } from '../generated/prisma/client';
 import { ProjetoRepository } from './projeto.repository';
 import { KanbanGateway } from './kanban.gateway';
@@ -460,12 +461,19 @@ export class ProjetoService {
     return task;
   }
 
-  async getTaskHistory(projectId: string, taskId: string) {
+  async getTaskHistory(projectId: string, taskId: string, page = 1, limit = 20) {
     const task = await this.repo.findTaskById(taskId, projectId);
     if (!task) {
       throw new NotFoundException('Task não encontrada');
     }
-    return this.repo.getTaskHistory(taskId);
+    const { items, total } = await this.repo.getTaskHistoryPaginated(taskId, page, limit);
+    return {
+      data: items,
+      total,
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
   }
 
   async deleteTask(projectId: string, taskId: string, performedById: string) {
@@ -740,13 +748,23 @@ export class ProjetoService {
     // Notify asynchronously (non-blocking)
     void (async () => {
       try {
-        // Parse @mentions from comment content
-        const mentionMatches = [...dto.content.matchAll(/@(\w+)/g)].map((m) => m[1]);
+        // Parse @mentions from comment content.
+        // Dedup case-insensitive e cap em FREE.mentionsPerComment para
+        // evitar que um comentário spammar notification/email em massa.
+        const seenMatches = new Set<string>();
+        const mentionMatches: string[] = [];
+        for (const m of dto.content.matchAll(/@(\w+)/g)) {
+          const lower = m[1].toLowerCase();
+          if (seenMatches.has(lower)) continue;
+          seenMatches.add(lower);
+          mentionMatches.push(m[1]);
+        }
         const mentionedUserIds = new Set<string>();
 
         if (mentionMatches.length > 0) {
           const members = await this.repo.findWorkspaceMembersByProject(projectId);
           for (const match of mentionMatches) {
+            if (mentionedUserIds.size >= FREE.mentionsPerComment) break;
             const matched = members.find(
               (m) => m.name.toLowerCase().split(/\s+/)[0] === match.toLowerCase(),
             );

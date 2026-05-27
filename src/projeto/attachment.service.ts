@@ -194,6 +194,18 @@ export class AttachmentService {
       }
     }
 
+    const ws = await this.repo.findWorkspaceForTask(taskId);
+    if (ws) {
+      const used = await this.repo.sumWorkspaceAttachmentBytes(ws.workspaceId);
+      const incoming = BigInt(file.size);
+      if (used + incoming > ws.storageQuotaBytes) {
+        const quotaMb = Number(ws.storageQuotaBytes / 1024n / 1024n);
+        throw new PayloadTooLargeException(
+          `Cota de armazenamento do workspace excedida (${quotaMb} MB). Remova anexos antigos ou solicite aumento.`,
+        );
+      }
+    }
+
     const uuid = randomUUID();
     const dir = taskDir(taskId);
     const tDir = thumbDir(taskId);
@@ -202,23 +214,46 @@ export class AttachmentService {
     let processedSize: number;
     let hasThumbnail: boolean;
 
-    if (this.isImage(mime)) {
-      ({ storedName, processedSize, hasThumbnail } = await this.processImage(
-        file.buffer,
-        dir,
-        tDir,
-        uuid,
-      ));
-    } else if (this.isVideo(mime)) {
-      ({ storedName, processedSize, hasThumbnail } = await this.processVideo(
-        file.buffer,
-        dir,
-        tDir,
-        uuid,
-        file.originalname,
-      ));
-    } else {
-      ({ storedName, processedSize, hasThumbnail } = await this.processPdf(file.buffer, dir, uuid));
+    // Sharp/FFmpeg lançam Error genérico se o conteúdo binário não bate com o
+    // MIME declarado (ex.: .exe renomeado para .jpg). Convertemos em
+    // UnsupportedMediaTypeException para não vazar stack trace nem retornar 500.
+    try {
+      if (this.isImage(mime)) {
+        ({ storedName, processedSize, hasThumbnail } = await this.processImage(
+          file.buffer,
+          dir,
+          tDir,
+          uuid,
+        ));
+      } else if (this.isVideo(mime)) {
+        ({ storedName, processedSize, hasThumbnail } = await this.processVideo(
+          file.buffer,
+          dir,
+          tDir,
+          uuid,
+          file.originalname,
+        ));
+      } else {
+        ({ storedName, processedSize, hasThumbnail } = await this.processPdf(
+          file.buffer,
+          dir,
+          uuid,
+        ));
+      }
+    } catch (err) {
+      this.logger.warn(
+        {
+          taskId,
+          uploadedById,
+          mime,
+          originalName: file.originalname,
+          err: (err as Error).message,
+        },
+        'Falha ao processar mídia — provavelmente conteúdo não bate com o MIME declarado',
+      );
+      throw new UnsupportedMediaTypeException(
+        'Arquivo inválido ou corrompido — não foi possível processar a mídia.',
+      );
     }
 
     const attachment = await this.repo.createAttachment({

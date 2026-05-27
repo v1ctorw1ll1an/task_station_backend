@@ -1,19 +1,21 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsString, MinLength } from 'class-validator';
+import { IsString, MaxLength, MinLength } from 'class-validator';
 
 export class ConsumeFirstAccessDto {
   @ApiProperty({ example: 'João Silva' })
   @IsString()
-  @IsNotEmpty()
+  @MinLength(2)
+  @MaxLength(120)
   name: string;
 
-  @ApiProperty({ example: 'minhaSenha123' })
+  @ApiProperty({ example: 'minhaSenha123', minLength: 8, maxLength: 72 })
   @IsString()
   @MinLength(8)
+  @MaxLength(72)
   newPassword: string;
 
   @ApiProperty({ example: 'minhaSenha123' })
   @IsString()
-  @IsNotEmpty()
+  @MaxLength(72)
   confirmPassword: string;
 }

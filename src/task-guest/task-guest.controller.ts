@@ -7,11 +7,13 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthUser } from '../auth/strategies/jwt.strategy';
 import { ProjetoMemberGuard } from '../projeto/guards/projeto-member.guard';
@@ -27,10 +29,12 @@ export class TaskGuestController {
   constructor(private readonly service: TaskGuestService) {}
 
   @Post()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiOperation({ summary: 'Cria convidado externo para uma task e retorna link público + wa.me' })
   @ApiResponse({ status: 201, description: 'Convidado criado' })
-  @ApiResponse({ status: 400, description: 'Telefone inválido' })
+  @ApiResponse({ status: 400, description: 'Telefone inválido ou limite atingido' })
   @ApiResponse({ status: 404, description: 'Task não encontrada' })
+  @ApiResponse({ status: 429, description: 'Throttle atingido (10/min por usuário)' })
   create(
     @Param('taskId') taskId: string,
     @CurrentUser() user: AuthUser,
@@ -66,6 +70,14 @@ export class TaskGuestController {
     @Body() dto: NotifyGuestDto,
   ) {
     return this.service.buildGuestNotifyUrl(taskId, guestId, dto.historyEntryIds);
+  }
+
+  @Patch(':guestId/extend')
+  @ApiOperation({ summary: 'Estende a expiração do link público (padrão: +30 dias)' })
+  @ApiResponse({ status: 200, description: 'Expiração atualizada' })
+  @ApiResponse({ status: 404, description: 'Convidado não encontrado' })
+  extend(@Param('guestId') guestId: string, @Query('days', new DefaultValuePipe(30)) days: number) {
+    return this.service.extendGuest(guestId, Number(days));
   }
 
   @Delete(':guestId')

@@ -78,6 +78,7 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('reset-password/:token')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Redefinir senha via token de email' })
@@ -98,6 +99,7 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('first-access')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Consumir token de primeiro acesso — define nome e senha, retorna JWT' })

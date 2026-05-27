@@ -12,6 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthUser } from '../auth/strategies/jwt.strategy';
 import { SuperuserGuard } from './guards/superuser.guard';
@@ -174,6 +175,7 @@ export class SuperadminController {
 
   // ── Broadcast ─────────────────────────────────────────────────────────────────
 
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('broadcast')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Enviar notificação para todos, empresas específicas ou um usuário' })
