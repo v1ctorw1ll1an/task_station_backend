@@ -1,5 +1,14 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsUUID } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  ArrayUnique,
+  IsArray,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+} from 'class-validator';
 
 export class NotifyGuestDto {
   @ApiProperty({
@@ -12,4 +21,12 @@ export class NotifyGuestDto {
   @ArrayUnique()
   @IsUUID('all', { each: true })
   historyEntryIds!: string[];
+
+  @ApiPropertyOptional({
+    description: 'Texto do resumo editado pelo usuário (substitui o resumo padrão das mudanças)',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  message?: string;
 }

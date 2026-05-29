@@ -1,5 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsDateString,
   IsEnum,
   IsOptional,
@@ -43,4 +45,14 @@ export class UpdateTaskPublicDto {
   @IsOptional()
   @IsUUID()
   columnId?: string;
+
+  @ApiPropertyOptional({
+    description: 'IDs das labels a atribuir (substitui o conjunto atual; só labels do projeto)',
+    type: [String],
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsUUID('all', { each: true })
+  labelIds?: string[];
 }

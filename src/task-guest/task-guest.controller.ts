@@ -10,6 +10,7 @@ import {
   Patch,
   Post,
   Query,
+  Request,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
@@ -19,7 +20,12 @@ import { AuthUser } from '../auth/strategies/jwt.strategy';
 import { ProjetoMemberGuard } from '../projeto/guards/projeto-member.guard';
 import { CreateGuestDto } from './dto/create-guest.dto';
 import { NotifyGuestDto } from './dto/notify-guest.dto';
+import { ToggleGuestLinkDto } from './dto/toggle-guest-link.dto';
 import { TaskGuestService } from './task-guest.service';
+
+function isProjectAdmin(role?: string): boolean {
+  return role === 'workspace_admin' || role === 'project_admin';
+}
 
 @ApiTags('task-guests')
 @ApiBearerAuth()
@@ -45,8 +51,12 @@ export class TaskGuestController {
 
   @Get()
   @ApiOperation({ summary: 'Lista convidados ativos de uma task' })
-  list(@Param('taskId') taskId: string) {
-    return this.service.listGuests(taskId);
+  list(
+    @Param('taskId') taskId: string,
+    @CurrentUser() user: AuthUser,
+    @Request() req: { projectMemberRole?: string },
+  ) {
+    return this.service.listGuests(taskId, user.id, isProjectAdmin(req.projectMemberRole));
   }
 
   @Get('search')
@@ -55,6 +65,16 @@ export class TaskGuestController {
   })
   search(@Param('projectId') projectId: string, @Query('q', new DefaultValuePipe('')) q: string) {
     return this.service.searchGuests(projectId, q);
+  }
+
+  @Post('notify/preview')
+  @ApiOperation({
+    summary: 'Retorna o resumo (texto editável) das mudanças, sem saudação/link',
+  })
+  @ApiResponse({ status: 200, description: 'Resumo gerado' })
+  @ApiResponse({ status: 400, description: 'Nenhuma alteração válida' })
+  previewNotify(@Param('taskId') taskId: string, @Body() dto: NotifyGuestDto) {
+    return this.service.previewGuestNotify(taskId, dto.historyEntryIds);
   }
 
   @Post(':guestId/notify')
@@ -69,7 +89,7 @@ export class TaskGuestController {
     @Param('guestId') guestId: string,
     @Body() dto: NotifyGuestDto,
   ) {
-    return this.service.buildGuestNotifyUrl(taskId, guestId, dto.historyEntryIds);
+    return this.service.buildGuestNotifyUrl(taskId, guestId, dto.historyEntryIds, dto.message);
   }
 
   @Patch(':guestId/extend')
@@ -78,6 +98,27 @@ export class TaskGuestController {
   @ApiResponse({ status: 404, description: 'Convidado não encontrado' })
   extend(@Param('guestId') guestId: string, @Query('days', new DefaultValuePipe(30)) days: number) {
     return this.service.extendGuest(guestId, Number(days));
+  }
+
+  @Patch(':guestId/link')
+  @ApiOperation({ summary: 'Habilita/desabilita o link público do convidado (owner ou admin)' })
+  @ApiResponse({ status: 200, description: 'Estado do link atualizado' })
+  @ApiResponse({ status: 403, description: 'Sem permissão para gerenciar o link' })
+  @ApiResponse({ status: 404, description: 'Convidado não encontrado nesta task' })
+  toggleLink(
+    @Param('taskId') taskId: string,
+    @Param('guestId') guestId: string,
+    @Body() dto: ToggleGuestLinkDto,
+    @CurrentUser() user: AuthUser,
+    @Request() req: { projectMemberRole?: string },
+  ) {
+    return this.service.setGuestLinkEnabled(
+      taskId,
+      guestId,
+      dto.enabled,
+      user.id,
+      isProjectAdmin(req.projectMemberRole),
+    );
   }
 
   @Delete(':guestId')

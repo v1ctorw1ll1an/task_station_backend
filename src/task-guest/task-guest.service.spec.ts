@@ -28,6 +28,14 @@ function makeRepo(
     findHistoryEntriesForTask: jest.fn(),
     rotateGuestToken: jest.fn(),
     findColumnNamesByIds: jest.fn().mockResolvedValue({}),
+    createGuestHistories: jest.fn(),
+    findProjectColumns: jest.fn().mockResolvedValue([]),
+    findProjectLabels: jest.fn().mockResolvedValue([]),
+    findLabelIdsInProject: jest.fn().mockResolvedValue([]),
+    createGuestChecklist: jest.fn(),
+    createGuestComment: jest.fn(),
+    setLinkEnabled: jest.fn(),
+    findTaskReporter: jest.fn().mockResolvedValue(null),
     ...overrides,
   } as unknown as jest.Mocked<TaskGuestRepository>;
 }
@@ -58,7 +66,33 @@ function makeService(
     }),
   } as unknown as ConfigService;
   const logger = makeLogger();
-  return { service: new TaskGuestService(repo, configService, logger as any), logger };
+  const projetoRepo = {
+    findTaskById: jest.fn().mockResolvedValue(null),
+    findChecklistsByTask: jest.fn().mockResolvedValue([]),
+    countChecklistsByTask: jest.fn().mockResolvedValue(0),
+    findChecklistById: jest.fn(),
+    updateChecklist: jest.fn(),
+    softDeleteChecklist: jest.fn(),
+    reorderChecklists: jest.fn(),
+    findCommentsByTask: jest.fn().mockResolvedValue([]),
+    findCommentById: jest.fn(),
+    updateComment: jest.fn(),
+    softDeleteComment: jest.fn(),
+    getTaskHistoryPaginated: jest.fn().mockResolvedValue({ items: [], total: 0 }),
+  };
+  const kanbanGateway = { emitToProject: jest.fn(), emitToTask: jest.fn() };
+  return {
+    service: new TaskGuestService(
+      repo,
+      projetoRepo as any,
+      kanbanGateway as any,
+      configService,
+      logger as any,
+    ),
+    logger,
+    projetoRepo,
+    kanbanGateway,
+  };
 }
 
 function makeTask(overrides: Record<string, unknown> = {}) {
@@ -254,12 +288,16 @@ describe('TaskGuestService.listGuests', () => {
           email: null,
           invitedAt: new Date('2026-05-01T00:00:00Z'),
           lastAccessedAt: null,
+          linkEnabled: true,
+          rawToken: 'tok-123',
         },
       ]),
+      findTaskReporter: jest.fn().mockResolvedValue({ id: 'task-1', reporterId: 'owner-1' }),
     });
     const { service } = makeService(repo);
 
-    const result = await service.listGuests('task-1');
+    // Quem não é owner nem admin não recebe a URL pública nem capacidade de gerenciar.
+    const result = await service.listGuests('task-1', 'outro-user', false);
 
     expect(repo.listActiveGuestsByTask).toHaveBeenCalledWith('task-1');
     expect(result).toEqual([
@@ -270,16 +308,45 @@ describe('TaskGuestService.listGuests', () => {
         email: null,
         invitedAt: new Date('2026-05-01T00:00:00Z'),
         lastAccessedAt: null,
+        linkEnabled: true,
+        canManage: false,
+        publicUrl: null,
       },
     ]);
-    expect(JSON.stringify(result)).not.toContain('tokenHash');
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain('tokenHash');
+    expect(serialized).not.toContain('tok-123');
+  });
+
+  it('expõe publicUrl e canManage para o owner da task', async () => {
+    const repo = makeRepo({
+      listActiveGuestsByTask: jest.fn().mockResolvedValue([
+        {
+          id: 'g1',
+          name: 'João',
+          phoneE164: '+5511999999999',
+          email: null,
+          invitedAt: new Date('2026-05-01T00:00:00Z'),
+          lastAccessedAt: null,
+          linkEnabled: true,
+          rawToken: 'tok-123',
+        },
+      ]),
+      findTaskReporter: jest.fn().mockResolvedValue({ id: 'task-1', reporterId: 'owner-1' }),
+    });
+    const { service } = makeService(repo);
+
+    const result = await service.listGuests('task-1', 'owner-1', false);
+
+    expect(result[0].canManage).toBe(true);
+    expect(result[0].publicUrl).toBe('http://localhost:3000/public/task/tok-123');
   });
 
   // Task sem convidados retorna array vazio (não 404)
   it('retorna array vazio quando não há convidados', async () => {
     const repo = makeRepo({ listActiveGuestsByTask: jest.fn().mockResolvedValue([]) });
     const { service } = makeService(repo);
-    await expect(service.listGuests('task-1')).resolves.toEqual([]);
+    await expect(service.listGuests('task-1', 'user-1', false)).resolves.toEqual([]);
   });
 });
 
@@ -333,7 +400,7 @@ describe('TaskGuestService.getPublicTask', () => {
       order: 1000,
       column: { id: 'col-1', name: 'Em andamento', color: '#fff', isDone: false },
       taskAssignees: [{ user: { name: 'Alice', photoUrl: 'http://x/a.png' } }],
-      taskLabels: [{ label: { name: 'urgente', color: '#f00' } }],
+      taskLabels: [{ label: { id: 'l1', name: 'urgente', color: '#f00' } }],
       taskChecklists: [{ id: 'c1', title: 'item', completed: false, order: 0 }],
       taskGuests: [
         { id: 'g1', name: 'João Convidado' },
@@ -363,8 +430,9 @@ describe('TaskGuestService.getPublicTask', () => {
       color: '#fff',
       isDone: false,
     });
-    expect(result.assignees).toEqual([{ name: 'Alice', photoUrl: 'http://x/a.png' }]);
-    expect(result.labels).toEqual([{ name: 'urgente', color: '#f00' }]);
+    // Convidado não vê funcionários internos: assignees não fazem parte do payload.
+    expect(result).not.toHaveProperty('assignees');
+    expect(result.labels).toEqual([{ id: 'l1', name: 'urgente', color: '#f00' }]);
     expect(result.checklists).toEqual([{ id: 'c1', title: 'item', completed: false, order: 0 }]);
     expect(result.permissions).toEqual({ canEdit: true });
   });
@@ -399,8 +467,8 @@ describe('TaskGuestService.getPublicTask', () => {
     expect(serialized).not.toContain('reporterId');
     expect(serialized).not.toContain('createdById');
     expect(serialized).not.toContain('userId');
-    // garante que não vazou id interno de user nos assignees
-    expect(result.assignees[0]).not.toHaveProperty('id');
+    // garante que não vazou nada de funcionários internos
+    expect(result).not.toHaveProperty('assignees');
   });
 
   // Task que sumiu entre validação do token e o GET (race) — 404 limpo
@@ -424,7 +492,7 @@ describe('TaskGuestService.getPublicTask', () => {
     });
     const { service } = makeService(repo);
     const result: any = await service.getPublicTask(ctx);
-    expect(result.assignees).toEqual([]);
+    expect(result).not.toHaveProperty('assignees');
     expect(result.labels).toEqual([]);
     expect(result.checklists).toEqual([]);
     expect(result.guests).toEqual([]);
@@ -475,6 +543,7 @@ describe('TaskGuestService.updatePublicTask', () => {
       expect.arrayContaining([
         expect.objectContaining({ field: 'title', oldValue: 'antigo', newValue: 'novo título' }),
       ]),
+      undefined,
     );
   });
 
@@ -503,6 +572,7 @@ describe('TaskGuestService.updatePublicTask', () => {
       expect.arrayContaining([
         expect.objectContaining({ field: 'columnId', oldValue: 'col-1', newValue: 'col-2' }),
       ]),
+      undefined,
     );
   });
 
@@ -598,6 +668,8 @@ describe('TaskGuestService.searchGuests', () => {
 });
 
 describe('TaskGuestService.buildGuestNotifyUrl', () => {
+  const STABLE_TOKEN = 'a'.repeat(43);
+
   function makeGuest(overrides: Record<string, unknown> = {}) {
     return {
       id: 'g1',
@@ -605,6 +677,7 @@ describe('TaskGuestService.buildGuestNotifyUrl', () => {
       name: 'Maria',
       phoneE164: '+5511988887777',
       tokenHash: 'hash-xyz',
+      rawToken: STABLE_TOKEN,
       task: { id: 'task-1', title: 'Tarefa Importante' },
       ...overrides,
     };
@@ -642,15 +715,28 @@ describe('TaskGuestService.buildGuestNotifyUrl', () => {
     expect(text).toContain(result.publicUrl);
   });
 
-  // Re-emite o token: chama rotateGuestToken com novo hash SHA-256 (do token cru contido na publicUrl)
-  it('re-emite token via rotateGuestToken usando hash SHA-256 do novo token cru', async () => {
+  // Link estável: reusa o rawToken existente e NÃO rotaciona o token
+  it('reusa o link estável (rawToken) sem rotacionar quando já existe', async () => {
     const rotate = jest.fn().mockResolvedValue(undefined);
     const repo = makeNotifyRepo({ rotateGuestToken: rotate });
     const { service } = makeService(repo);
     const result = await service.buildGuestNotifyUrl('task-1', 'g1', ['h1']);
+    expect(result.publicUrl).toBe(`http://localhost:3000/public/task/${STABLE_TOKEN}`);
+    expect(rotate).not.toHaveBeenCalled();
+  });
+
+  // Convidado legado sem rawToken: gera e salva um token (uma vez)
+  it('gera e salva token quando o convidado ainda não tem rawToken', async () => {
+    const rotate = jest.fn().mockResolvedValue(undefined);
+    const repo = makeNotifyRepo({
+      findGuestWithTask: jest.fn().mockResolvedValue(makeGuest({ rawToken: null })),
+      rotateGuestToken: rotate,
+    });
+    const { service } = makeService(repo);
+    const result = await service.buildGuestNotifyUrl('task-1', 'g1', ['h1']);
     const rawToken = result.publicUrl.split('/').pop()!;
     const expectedHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-    expect(rotate).toHaveBeenCalledWith('g1', expectedHash);
+    expect(rotate).toHaveBeenCalledWith('g1', expectedHash, rawToken);
   });
 
   // Segurança: guest precisa pertencer à task informada (IDOR)
@@ -687,8 +773,8 @@ describe('TaskGuestService.buildGuestNotifyUrl', () => {
     expect(rotate).not.toHaveBeenCalled();
   });
 
-  // Diff de campo escalar: mostra valor antigo com ~strikethrough~ e novo com *bold*
-  it('renderiza diff de title com ~strikethrough~ e *novo*', async () => {
+  // Diff de campo escalar: formato seguro p/ WhatsApp (sem tachado ~), valores em aspas + seta
+  it('renderiza diff de title em formato seguro (sem ~), com seta entre valores', async () => {
     const repo = makeNotifyRepo({
       findHistoryEntriesForTask: jest
         .fn()
@@ -699,12 +785,12 @@ describe('TaskGuestService.buildGuestNotifyUrl', () => {
     const { service } = makeService(repo);
     const result = await service.buildGuestNotifyUrl('task-1', 'g1', ['h1']);
     const text = new URL(result.whatsappUrl).searchParams.get('text')!;
-    expect(text).toContain('~"Antigo"~');
-    expect(text).toContain('*"Novo Título"*');
+    expect(text).toContain('*Título*: "Antigo" → "Novo Título"');
+    expect(text).not.toContain('~');
   });
 
-  // Diff de description: velho ~strike~, novo *bold* — variantes distintas
-  it('description: antigo com ~strike~ e novo com *bold*, separados por seta', async () => {
+  // Diff de description: bloco único com o novo valor, sem tachado
+  it('description: mostra o novo valor sem tachado (~)', async () => {
     const repo = makeNotifyRepo({
       findHistoryEntriesForTask: jest
         .fn()
@@ -715,13 +801,9 @@ describe('TaskGuestService.buildGuestNotifyUrl', () => {
     const { service } = makeService(repo);
     const result = await service.buildGuestNotifyUrl('task-1', 'g1', ['h1']);
     const text = new URL(result.whatsappUrl).searchParams.get('text')!;
-    // velho: ~velha desc~ (com til); novo: *nova desc* (com asterisco)
-    expect(text).toContain('~velha desc~');
-    expect(text).toContain('*nova desc*');
-    expect(text).not.toContain('~nova desc~');
-    expect(text).not.toContain('*velha desc*');
-    // seta entre os blocos
-    expect(text).toMatch(/->/);
+    expect(text).toContain('*Descrição* atualizada:');
+    expect(text).toContain('"nova desc"');
+    expect(text).not.toContain('~');
   });
 
   // Mapeia valores de priority para rótulos em português
@@ -751,14 +833,14 @@ describe('TaskGuestService.buildGuestNotifyUrl', () => {
     expect(linkIdx).toBeLessThan(ctaIdx);
   });
 
-  // Rodapé: separador visual antes da CTA TaskStation
-  it('contém separador antes do rodapé com CTA TaskStation', async () => {
+  // Rodapé: CTA TaskStation presente (sem régua de hífens, que quebrava no WhatsApp)
+  it('contém o rodapé com CTA TaskStation e sem régua de hífens', async () => {
     const repo = makeNotifyRepo();
     const { service } = makeService(repo);
     const result = await service.buildGuestNotifyUrl('task-1', 'g1', ['h1']);
     const text = new URL(result.whatsappUrl).searchParams.get('text')!;
-    expect(text).toMatch(/[-]{8,}/); // separador ASCII compatível com WA Web
     expect(text).toContain('https://taskstation.manyflux.com.br');
+    expect(text).not.toMatch(/[-]{8,}/);
   });
 
   // columnId no histórico é traduzido para o NOME da coluna (não UUID feio)
@@ -822,12 +904,11 @@ describe('TaskGuestService.buildGuestNotifyUrl', () => {
     ]);
     const text = new URL(result.whatsappUrl).searchParams.get('text')!;
     expect(text).toMatch(/novo item.*Item A/i);
-    expect(text).toContain('[X] *"Item B"*');
-    expect(text).toContain('[ ] *"Item C"*');
-    expect(text).toContain('~"velho"~');
-    expect(text).toContain('*"novo"*');
-    expect(text).toContain('removido');
-    expect(text).toContain('Item D');
+    expect(text).toContain('(concluído): "Item B"');
+    expect(text).toContain('(reaberto): "Item C"');
+    expect(text).toContain('(renomeado): "velho" → "novo"');
+    expect(text).toContain('(removido): "Item D"');
+    expect(text).not.toContain('~');
   });
 
   // Repo é chamado com filtro de taskId — evita vazar entradas de outras tasks
@@ -839,6 +920,50 @@ describe('TaskGuestService.buildGuestNotifyUrl', () => {
     const { service } = makeService(repo);
     await service.buildGuestNotifyUrl('task-1', 'g1', ['h1', 'h2']);
     expect(findHistory).toHaveBeenCalledWith('task-1', ['h1', 'h2']);
+  });
+
+  // customMessage substitui o resumo padrão (mas saudação e link continuam automáticos)
+  it('usa o customMessage no corpo, mantendo saudação e link', async () => {
+    const repo = makeNotifyRepo();
+    const { service } = makeService(repo);
+    const result = await service.buildGuestNotifyUrl(
+      'task-1',
+      'g1',
+      ['h1'],
+      'Texto editado pelo usuário',
+    );
+    const text = new URL(result.whatsappUrl).searchParams.get('text')!;
+    expect(text).toContain('Olá *Maria*');
+    expect(text).toContain('Texto editado pelo usuário');
+    expect(text).toContain(result.publicUrl);
+  });
+});
+
+describe('TaskGuestService.previewGuestNotify', () => {
+  function makeRepoWith(entries: Array<Record<string, unknown>>) {
+    return makeRepo({
+      findHistoryEntriesForTask: jest.fn().mockResolvedValue(entries),
+      findColumnNamesByIds: jest.fn().mockResolvedValue({}),
+    });
+  }
+
+  it('retorna apenas o resumo das mudanças (sem saudação/link/rodapé)', async () => {
+    const repo = makeRepoWith([{ id: 'h1', field: 'title', oldValue: 'a', newValue: 'b' }]);
+    const { service } = makeService(repo);
+    const { message } = await service.previewGuestNotify('task-1', ['h1']);
+    expect(message).toContain('*Título*: "a" → "b"');
+    expect(message).not.toContain('Olá');
+    expect(message).not.toContain('Acesse a task');
+    expect(message).not.toContain('taskstation.manyflux');
+    expect(message).not.toContain('~');
+  });
+
+  it('lança BadRequestException quando não há entradas válidas', async () => {
+    const repo = makeRepoWith([]);
+    const { service } = makeService(repo);
+    await expect(service.previewGuestNotify('task-1', ['x'])).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 });
 

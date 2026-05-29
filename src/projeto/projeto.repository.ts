@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma, TaskPriority } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { TASK_HISTORY_MAX } from '../common/limits';
 
 const TASK_SELECT = {
   id: true,
@@ -22,7 +23,7 @@ const TASK_SELECT = {
     where: { label: { deletedAt: null } },
     select: { label: { select: { id: true, name: true, color: true } } },
   },
-  _count: { select: { taskComments: true } },
+  _count: { select: { taskComments: true, taskGuests: { where: { deletedAt: null } } } },
 } as const;
 
 const LABEL_SELECT = {
@@ -507,37 +508,36 @@ export class ProjetoRepository {
 
   // ── Task Comments ─────────────────────────────────────────────────────────────
 
+  private commentSelect = {
+    id: true,
+    content: true,
+    createdAt: true,
+    updatedAt: true,
+    userId: true,
+    guestId: true,
+    user: { select: { id: true, name: true, email: true, photoUrl: true } },
+    guest: { select: { id: true, name: true } },
+  } as const;
+
   findCommentsByTask(taskId: string) {
     return this.prisma.taskComment.findMany({
       where: { taskId, deletedAt: null },
       orderBy: { createdAt: 'asc' },
-      select: {
-        id: true,
-        content: true,
-        createdAt: true,
-        updatedAt: true,
-        user: { select: { id: true, name: true, email: true, photoUrl: true } },
-      },
+      select: this.commentSelect,
     });
   }
 
   findCommentById(commentId: string, taskId: string) {
     return this.prisma.taskComment.findFirst({
       where: { id: commentId, taskId, deletedAt: null },
-      select: { id: true, taskId: true, userId: true, content: true },
+      select: { id: true, taskId: true, userId: true, guestId: true, content: true },
     });
   }
 
   createComment(taskId: string, userId: string, content: string) {
     return this.prisma.taskComment.create({
       data: { taskId, userId, content },
-      select: {
-        id: true,
-        content: true,
-        createdAt: true,
-        updatedAt: true,
-        user: { select: { id: true, name: true, email: true, photoUrl: true } },
-      },
+      select: this.commentSelect,
     });
   }
 
@@ -545,13 +545,7 @@ export class ProjetoRepository {
     return this.prisma.taskComment.update({
       where: { id: commentId },
       data: { content },
-      select: {
-        id: true,
-        content: true,
-        createdAt: true,
-        updatedAt: true,
-        user: { select: { id: true, name: true, email: true, photoUrl: true } },
-      },
+      select: this.commentSelect,
     });
   }
 
@@ -624,7 +618,7 @@ export class ProjetoRepository {
 
   // ── Task History ──────────────────────────────────────────────────────────────
 
-  createTaskHistories(
+  async createTaskHistories(
     entries: {
       taskId: string;
       userId: string;
@@ -633,8 +627,30 @@ export class ProjetoRepository {
       newValue: string | null;
     }[],
   ) {
-    if (entries.length === 0) return Promise.resolve({ count: 0 });
-    return this.prisma.taskHistory.createMany({ data: entries });
+    if (entries.length === 0) return { count: 0 };
+    const result = await this.prisma.taskHistory.createMany({ data: entries });
+    const taskIds = [...new Set(entries.map((e) => e.taskId))];
+    await Promise.all(taskIds.map((id) => this.pruneTaskHistory(id, TASK_HISTORY_MAX)));
+    return result;
+  }
+
+  /**
+   * Ring buffer do histórico: mantém apenas as `keep` entradas mais recentes
+   * da task e deleta (hard delete) as mais antigas. Ordenação determinística
+   * `[changedAt desc, id desc]` para casar com a leitura quando várias entradas
+   * compartilham o mesmo `changedAt` (criadas no mesmo `createMany`).
+   */
+  async pruneTaskHistory(taskId: string, keep: number) {
+    const survivors = await this.prisma.taskHistory.findMany({
+      where: { taskId },
+      orderBy: [{ changedAt: 'desc' }, { id: 'desc' }],
+      take: keep,
+      select: { id: true },
+    });
+    if (survivors.length < keep) return;
+    await this.prisma.taskHistory.deleteMany({
+      where: { taskId, id: { notIn: survivors.map((s) => s.id) } },
+    });
   }
 
   async getTaskHistoryPaginated(taskId: string, page: number, limit: number) {
@@ -642,7 +658,7 @@ export class ProjetoRepository {
     const [items, total] = await this.prisma.$transaction([
       this.prisma.taskHistory.findMany({
         where: { taskId },
-        orderBy: { changedAt: 'desc' },
+        orderBy: [{ changedAt: 'desc' }, { id: 'desc' }],
         skip,
         take: limit,
         select: {
@@ -652,6 +668,7 @@ export class ProjetoRepository {
           newValue: true,
           changedAt: true,
           user: { select: { id: true, name: true, email: true, photoUrl: true } },
+          guest: { select: { id: true, name: true } },
         },
       }),
       this.prisma.taskHistory.count({ where: { taskId } }),

@@ -30,7 +30,7 @@ function makeTask(overrides: Record<string, unknown> = {}) {
       { label: { id: 'label-2', name: 'Urgente', color: '#f59e0b' } },
     ],
     reporter: { id: 'user-reporter', name: 'Reporter', email: 'reporter@test.com', photoUrl: null },
-    _count: { taskComments: 2 },
+    _count: { taskComments: 2, taskGuests: 0 },
     ...overrides,
   };
 }
@@ -110,7 +110,7 @@ function makeNewTask(overrides: Record<string, unknown> = {}) {
       email: 'performer@test.com',
       photoUrl: null,
     },
-    _count: { taskComments: 0 },
+    _count: { taskComments: 0, taskGuests: 0 },
     ...overrides,
   };
 }

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { TASK_HISTORY_MAX } from '../common/limits';
 
 export interface CreateTaskGuestData {
   taskId: string;
@@ -8,6 +9,7 @@ export interface CreateTaskGuestData {
   phoneE164: string;
   email: string | null;
   tokenHash: string;
+  rawToken: string;
   invitedById: string;
   expiresAt: Date | null;
 }
@@ -31,6 +33,7 @@ export class TaskGuestRepository {
         phoneE164: data.phoneE164,
         email: data.email,
         tokenHash: data.tokenHash,
+        rawToken: data.rawToken,
         invitedById: data.invitedById,
         expiresAt: data.expiresAt,
       },
@@ -62,7 +65,23 @@ export class TaskGuestRepository {
         invitedAt: true,
         expiresAt: true,
         lastAccessedAt: true,
+        linkEnabled: true,
+        rawToken: true,
       },
+    });
+  }
+
+  setLinkEnabled(guestId: string, enabled: boolean) {
+    return this.prisma.taskGuest.update({
+      where: { id: guestId },
+      data: { linkEnabled: enabled },
+    });
+  }
+
+  findTaskReporter(taskId: string) {
+    return this.prisma.task.findFirst({
+      where: { id: taskId, deletedAt: null },
+      select: { id: true, reporterId: true },
     });
   }
 
@@ -87,6 +106,7 @@ export class TaskGuestRepository {
         id: true,
         taskId: true,
         expiresAt: true,
+        linkEnabled: true,
         task: {
           select: {
             id: true,
@@ -115,15 +135,16 @@ export class TaskGuestRepository {
         name: true,
         phoneE164: true,
         tokenHash: true,
+        rawToken: true,
         task: { select: { id: true, title: true } },
       },
     });
   }
 
-  rotateGuestToken(guestId: string, tokenHash: string) {
+  rotateGuestToken(guestId: string, tokenHash: string, rawToken: string) {
     return this.prisma.taskGuest.update({
       where: { id: guestId },
-      data: { tokenHash },
+      data: { tokenHash, rawToken },
     });
   }
 
@@ -204,14 +225,30 @@ export class TaskGuestRepository {
     });
   }
 
-  applyPublicTaskUpdate(
+  async applyPublicTaskUpdate(
     taskId: string,
     guestId: string,
     data: Prisma.TaskUpdateInput,
     historyEntries: Array<{ field: string; oldValue: string | null; newValue: string | null }>,
+    labelChanges?: { add: string[]; remove: string[] },
   ) {
-    return this.prisma.$transaction(async (tx) => {
-      await tx.task.update({ where: { id: taskId }, data });
+    await this.prisma.$transaction(async (tx) => {
+      if (Object.keys(data).length > 0) {
+        await tx.task.update({ where: { id: taskId }, data });
+      }
+      if (labelChanges) {
+        if (labelChanges.remove.length > 0) {
+          await tx.taskLabel.deleteMany({
+            where: { taskId, labelId: { in: labelChanges.remove } },
+          });
+        }
+        if (labelChanges.add.length > 0) {
+          await tx.taskLabel.createMany({
+            data: labelChanges.add.map((labelId) => ({ taskId, labelId })),
+            skipDuplicates: true,
+          });
+        }
+      }
       if (historyEntries.length > 0) {
         await tx.taskHistory.createMany({
           data: historyEntries.map((entry) => ({
@@ -224,6 +261,96 @@ export class TaskGuestRepository {
           })),
         });
       }
+    });
+    if (historyEntries.length > 0) {
+      await this.pruneTaskHistory(taskId, TASK_HISTORY_MAX);
+    }
+  }
+
+  async createGuestHistories(
+    taskId: string,
+    guestId: string,
+    entries: Array<{ field: string; oldValue: string | null; newValue: string | null }>,
+  ) {
+    if (entries.length === 0) return { count: 0 };
+    const result = await this.prisma.taskHistory.createMany({
+      data: entries.map((entry) => ({
+        taskId,
+        guestId,
+        userId: null,
+        field: entry.field,
+        oldValue: entry.oldValue,
+        newValue: entry.newValue,
+      })),
+    });
+    await this.pruneTaskHistory(taskId, TASK_HISTORY_MAX);
+    return result;
+  }
+
+  /**
+   * Ring buffer do histórico: mantém apenas as `keep` entradas mais recentes
+   * da task e deleta as mais antigas. Mesma lógica de
+   * `ProjetoRepository.pruneTaskHistory` — replicada para evitar acoplamento
+   * entre módulos. Ordenação `[changedAt desc, id desc]` casa com a leitura.
+   */
+  private async pruneTaskHistory(taskId: string, keep: number) {
+    const survivors = await this.prisma.taskHistory.findMany({
+      where: { taskId },
+      orderBy: [{ changedAt: 'desc' }, { id: 'desc' }],
+      take: keep,
+      select: { id: true },
+    });
+    if (survivors.length < keep) return;
+    await this.prisma.taskHistory.deleteMany({
+      where: { taskId, id: { notIn: survivors.map((s) => s.id) } },
+    });
+  }
+
+  findProjectColumns(projectId: string) {
+    return this.prisma.column.findMany({
+      where: { projectId, deletedAt: null },
+      orderBy: { order: 'asc' },
+      select: { id: true, name: true, color: true, isDone: true },
+    });
+  }
+
+  findProjectLabels(projectId: string) {
+    return this.prisma.label.findMany({
+      where: { projectId, deletedAt: null },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, color: true },
+    });
+  }
+
+  async findLabelIdsInProject(labelIds: string[], projectId: string): Promise<string[]> {
+    if (labelIds.length === 0) return [];
+    const rows = await this.prisma.label.findMany({
+      where: { id: { in: labelIds }, projectId, deletedAt: null },
+      select: { id: true },
+    });
+    return rows.map((r) => r.id);
+  }
+
+  createGuestChecklist(taskId: string, title: string, order: number) {
+    return this.prisma.taskChecklist.create({
+      data: { taskId, title, order, completed: false },
+      select: { id: true, title: true, completed: true, order: true },
+    });
+  }
+
+  createGuestComment(taskId: string, guestId: string, content: string) {
+    return this.prisma.taskComment.create({
+      data: { taskId, guestId, content },
+      select: {
+        id: true,
+        content: true,
+        createdAt: true,
+        updatedAt: true,
+        userId: true,
+        guestId: true,
+        user: { select: { id: true, name: true, photoUrl: true } },
+        guest: { select: { id: true, name: true } },
+      },
     });
   }
 
@@ -244,7 +371,7 @@ export class TaskGuestRepository {
           select: { user: { select: { name: true, photoUrl: true } } },
         },
         taskLabels: {
-          select: { label: { select: { name: true, color: true } } },
+          select: { label: { select: { id: true, name: true, color: true } } },
         },
         taskChecklists: {
           where: { deletedAt: null },

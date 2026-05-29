@@ -42,7 +42,7 @@ function makeTask(overrides: Record<string, unknown> = {}) {
     taskAssignees: [],
     taskLabels: [],
     reporter: { id: 'user-1', name: 'User', email: 'user@test.com', photoUrl: null },
-    _count: { taskComments: 0 },
+    _count: { taskComments: 0, taskGuests: 0 },
     ...overrides,
   };
 }
@@ -85,6 +85,7 @@ function makeService(repo: jest.Mocked<ProjetoRepository>) {
     emitToProject: jest.fn(),
     emitToWorkspace: jest.fn(),
     emitToCompany: jest.fn(),
+    emitToTask: jest.fn(),
   } as never;
   const notificacaoService = { notificar: jest.fn() } as never;
   const prismaService = {

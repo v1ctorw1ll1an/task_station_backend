@@ -353,6 +353,7 @@ export class ProjetoService {
       task: finalTask,
       actorId: performedById,
     });
+    this.kanbanGateway.emitToTask(taskId, 'task:changed', { taskId });
 
     // Notify new assignees (TASK_ASSIGNED)
     const oldAssigneeIds = new Set(task.taskAssignees.map((a) => a.user.id));
@@ -451,6 +452,7 @@ export class ProjetoService {
       afterTaskId: dto.afterTaskId ?? null,
       actorId: performedById,
     });
+    this.kanbanGateway.emitToTask(taskId, 'task:changed', { taskId });
 
     return this.repo.findTaskById(taskId, projectId);
   }
@@ -459,6 +461,13 @@ export class ProjetoService {
     const task = await this.repo.findTaskById(taskId, projectId);
     if (!task) throw new NotFoundException('Task não encontrada');
     return task;
+  }
+
+  // Notifica clientes para refazer comentários/checklist/histórico (dialog aberto)
+  // e a página pública do convidado.
+  private emitDetailChanged(projectId: string, taskId: string) {
+    this.kanbanGateway.emitToProject(projectId, 'task:detailChanged', { taskId });
+    this.kanbanGateway.emitToTask(taskId, 'task:changed', { taskId });
   }
 
   async getTaskHistory(projectId: string, taskId: string, page = 1, limit = 20) {
@@ -659,6 +668,7 @@ export class ProjetoService {
       { taskId, userId, field: 'checklist.created', oldValue: null, newValue: item.title },
     ]);
     this.logger.info({ projectId, taskId, checklistId: item.id, userId }, 'Checklist item created');
+    this.emitDetailChanged(projectId, taskId);
     return item;
   }
 
@@ -705,6 +715,7 @@ export class ProjetoService {
     if (entries.length > 0) await this.repo.createTaskHistories(entries);
 
     this.logger.info({ projectId, taskId, checklistId }, 'Checklist item updated');
+    this.emitDetailChanged(projectId, taskId);
     return updated;
   }
 
@@ -720,6 +731,7 @@ export class ProjetoService {
       { taskId, userId, field: 'checklist.deleted', oldValue: item.title, newValue: null },
     ]);
     this.logger.info({ projectId, taskId, checklistId, userId }, 'Checklist item soft-deleted');
+    this.emitDetailChanged(projectId, taskId);
   }
 
   async reorderChecklists(projectId: string, taskId: string, dto: ReorderChecklistDto) {
@@ -728,6 +740,7 @@ export class ProjetoService {
     if (!task) throw new NotFoundException('Task não encontrada');
     await this.repo.reorderChecklists(items);
     this.logger.info({ projectId, taskId }, 'Checklist reordered');
+    this.emitDetailChanged(projectId, taskId);
   }
 
   // ── Comentários ───────────────────────────────────────────────────────────────
@@ -817,6 +830,7 @@ export class ProjetoService {
       }
     })();
 
+    this.emitDetailChanged(projectId, taskId);
     return comment;
   }
 
@@ -840,6 +854,7 @@ export class ProjetoService {
 
     const updated = await this.repo.updateComment(commentId, dto.content);
     this.logger.info({ projectId, taskId, commentId, userId }, 'Comment updated');
+    this.emitDetailChanged(projectId, taskId);
     return updated;
   }
 
@@ -862,6 +877,7 @@ export class ProjetoService {
 
     await this.repo.softDeleteComment(commentId);
     this.logger.info({ projectId, taskId, commentId, userId }, 'Comment soft-deleted');
+    this.emitDetailChanged(projectId, taskId);
   }
 
   // ── Transfer (Copy/Cut) ──────────────────────────────────────────────────────

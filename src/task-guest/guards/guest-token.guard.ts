@@ -48,6 +48,14 @@ export class GuestTokenGuard implements CanActivate {
       throw new NotFoundException('Link expirado');
     }
 
+    if (!guest.linkEnabled) {
+      this.logger.warn(
+        { tokenHashPrefix: tokenHash.slice(0, 8), guestId: guest.id },
+        'Tentativa de acesso com link desabilitado',
+      );
+      throw new NotFoundException('Link desabilitado');
+    }
+
     request.guestContext = {
       guestId: guest.id,
       taskId: guest.taskId,

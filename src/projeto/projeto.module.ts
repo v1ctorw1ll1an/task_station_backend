@@ -41,6 +41,6 @@ import { NotificacaoModule } from '../notificacao/notificacao.module';
     KanbanGateway,
     WsAuthGuard,
   ],
-  exports: [KanbanGateway],
+  exports: [KanbanGateway, ProjetoRepository],
 })
 export class ProjetoModule {}

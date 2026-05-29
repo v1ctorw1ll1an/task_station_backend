@@ -35,6 +35,7 @@ function makeActiveGuest(overrides: Record<string, unknown> = {}) {
   return {
     id: 'guest-1',
     taskId: 'task-1',
+    linkEnabled: true,
     task: {
       id: 'task-1',
       projectId: 'project-1',

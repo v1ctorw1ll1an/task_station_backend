@@ -11,7 +11,9 @@ export type KanbanEvent =
   | 'taskSession:started'
   | 'taskSession:paused'
   | 'taskSession:resumed'
-  | 'taskSession:stopped';
+  | 'taskSession:stopped'
+  | 'task:detailChanged'
+  | 'task:changed';
 
 export interface KanbanTaskSnapshot {
   id: string;
@@ -138,6 +140,14 @@ export interface TaskSessionStoppedPayload {
   userId: string;
   totalSeconds: number;
   status: 'stopped';
+}
+
+export interface TaskDetailChangedPayload {
+  taskId: string;
+}
+
+export interface TaskChangedPayload {
+  taskId: string;
 }
 
 // Tipo discriminado para uso interno no service

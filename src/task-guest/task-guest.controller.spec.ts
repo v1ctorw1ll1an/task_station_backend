@@ -40,14 +40,33 @@ describe('TaskGuestController', () => {
   });
 
   // GET delega para listGuests com taskId
-  it('GET delega ao service.listGuests', async () => {
+  it('GET delega ao service.listGuests com user.id e isAdmin', async () => {
     const service = makeService({ listGuests: jest.fn().mockResolvedValue([{ id: 'g1' }]) });
     const controller = new TaskGuestController(service);
 
-    const result = await controller.list('task-1');
+    const result = await controller.list('task-1', user, { projectMemberRole: 'workspace_admin' });
 
-    expect(service.listGuests).toHaveBeenCalledWith('task-1');
+    expect(service.listGuests).toHaveBeenCalledWith('task-1', 'user-1', true);
     expect(result).toEqual([{ id: 'g1' }]);
+  });
+
+  it('PATCH :guestId/link delega ao service.setGuestLinkEnabled', async () => {
+    const service = makeService({
+      setGuestLinkEnabled: jest.fn().mockResolvedValue({ id: 'g1', linkEnabled: false }),
+    });
+    const controller = new TaskGuestController(service);
+
+    await controller.toggleLink('task-1', 'g1', { enabled: false }, user, {
+      projectMemberRole: 'member',
+    });
+
+    expect(service.setGuestLinkEnabled).toHaveBeenCalledWith(
+      'task-1',
+      'g1',
+      false,
+      'user-1',
+      false,
+    );
   });
 
   // Search delega para service.searchGuests com projectId e q
@@ -60,8 +79,8 @@ describe('TaskGuestController', () => {
     expect(service.searchGuests).toHaveBeenCalledWith('project-1', 'jo');
   });
 
-  // POST notify delega ao service.buildGuestNotifyUrl com taskId, guestId e historyEntryIds
-  it('POST notify delega ao service.buildGuestNotifyUrl', async () => {
+  // POST notify delega ao service.buildGuestNotifyUrl com taskId, guestId, historyEntryIds e message
+  it('POST notify delega ao service.buildGuestNotifyUrl repassando message', async () => {
     const service = makeService({
       buildGuestNotifyUrl: jest
         .fn()
@@ -69,10 +88,31 @@ describe('TaskGuestController', () => {
     });
     const controller = new TaskGuestController(service);
 
-    const result = await controller.notify('task-1', 'g1', { historyEntryIds: ['h1', 'h2'] });
+    const result = await controller.notify('task-1', 'g1', {
+      historyEntryIds: ['h1', 'h2'],
+      message: 'texto editado',
+    });
 
-    expect(service.buildGuestNotifyUrl).toHaveBeenCalledWith('task-1', 'g1', ['h1', 'h2']);
+    expect(service.buildGuestNotifyUrl).toHaveBeenCalledWith(
+      'task-1',
+      'g1',
+      ['h1', 'h2'],
+      'texto editado',
+    );
     expect(result).toEqual({ whatsappUrl: 'https://wa.me/x', fields: ['title'] });
+  });
+
+  // POST notify/preview delega ao service.previewGuestNotify
+  it('POST notify/preview delega ao service.previewGuestNotify', async () => {
+    const service = makeService({
+      previewGuestNotify: jest.fn().mockResolvedValue({ message: 'resumo' }),
+    });
+    const controller = new TaskGuestController(service);
+
+    const result = await controller.previewNotify('task-1', { historyEntryIds: ['h1'] });
+
+    expect(service.previewGuestNotify).toHaveBeenCalledWith('task-1', ['h1']);
+    expect(result).toEqual({ message: 'resumo' });
   });
 
   // DELETE delega para revokeGuest com taskId e guestId (proteção contra revogar de outra task valida no service)

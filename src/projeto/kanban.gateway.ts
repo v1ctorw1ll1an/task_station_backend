@@ -8,6 +8,7 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import * as crypto from 'crypto';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
 import { MetricsService } from '../metrics/metrics.service';
@@ -157,6 +158,52 @@ export class KanbanGateway implements OnGatewayInit, OnGatewayConnection, OnGate
     const room = `company:${companyId}`;
     this.server.to(room).emit(event, data);
     this.logger.debug({ companyId, event }, 'Evento emitido para sala da empresa');
+  }
+
+  emitToTask<T>(taskId: string, event: KanbanEvent, data: T): void {
+    const room = `task:${taskId}`;
+    this.server.to(room).emit(event, data);
+    this.logger.debug({ taskId, event }, 'Evento emitido para sala da task');
+  }
+
+  /**
+   * Convidados (sem JWT) entram na sala da própria task validando o token público.
+   * Usa o PrismaService diretamente para evitar dependência circular com TaskGuestModule.
+   */
+  @SubscribeMessage('joinPublicTask')
+  async handleJoinPublicTask(client: Socket, payload: { token: string }): Promise<void> {
+    if (!payload?.token) {
+      client.emit('error', { message: 'token é obrigatório' });
+      return;
+    }
+
+    const tokenHash = crypto.createHash('sha256').update(payload.token).digest('hex');
+    const guest = await this.prisma.taskGuest.findFirst({
+      where: { tokenHash, deletedAt: null },
+      select: {
+        id: true,
+        taskId: true,
+        expiresAt: true,
+        linkEnabled: true,
+        task: { select: { deletedAt: true, project: { select: { deletedAt: true } } } },
+      },
+    });
+
+    if (
+      !guest ||
+      !guest.linkEnabled ||
+      guest.task.deletedAt !== null ||
+      guest.task.project.deletedAt !== null ||
+      (guest.expiresAt && guest.expiresAt.getTime() < Date.now())
+    ) {
+      client.emit('error', { message: 'Link inválido' });
+      return;
+    }
+
+    const room = `task:${guest.taskId}`;
+    await client.join(room);
+    client.emit('joinedPublicTask', { taskId: guest.taskId });
+    this.logger.debug({ guestId: guest.id, room }, 'Convidado entrou na sala da task');
   }
 
   private async validateWorkspaceMembership(userId: string, workspaceId: string): Promise<boolean> {
