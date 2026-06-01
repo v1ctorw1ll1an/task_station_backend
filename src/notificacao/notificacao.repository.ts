@@ -108,12 +108,12 @@ export class NotificacaoRepository {
       taskComment: typeof data.taskComment === 'boolean' ? data.taskComment : undefined,
       taskUpdated: typeof data.taskUpdated === 'boolean' ? data.taskUpdated : undefined,
       eventReminder: typeof data.eventReminder === 'boolean' ? data.eventReminder : undefined,
-      eventReminderSound:
-        typeof data.eventReminderSound === 'boolean' ? data.eventReminderSound : undefined,
       eventReminderPopup:
         typeof data.eventReminderPopup === 'boolean' ? data.eventReminderPopup : undefined,
-      eventReminderBrowser:
-        typeof data.eventReminderBrowser === 'boolean' ? data.eventReminderBrowser : undefined,
+      notificationSound:
+        typeof data.notificationSound === 'boolean' ? data.notificationSound : undefined,
+      notificationBrowser:
+        typeof data.notificationBrowser === 'boolean' ? data.notificationBrowser : undefined,
     };
     return this.prisma.notificationPreference.upsert({
       where: { userId },

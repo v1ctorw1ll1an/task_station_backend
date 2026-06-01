@@ -27,13 +27,13 @@ export class UpdatePreferenceDto {
 
   @IsOptional()
   @IsBoolean()
-  eventReminderSound?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
   eventReminderPopup?: boolean;
 
   @IsOptional()
   @IsBoolean()
-  eventReminderBrowser?: boolean;
+  notificationSound?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  notificationBrowser?: boolean;
 }

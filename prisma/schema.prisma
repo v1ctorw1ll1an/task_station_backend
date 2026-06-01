@@ -449,9 +449,12 @@ model NotificationPreference {
   taskComment           Boolean  @default(true) @map("task_comment")
   taskUpdated           Boolean  @default(true) @map("task_updated")
   eventReminder         Boolean  @default(true) @map("event_reminder")
-  eventReminderSound    Boolean  @default(true) @map("event_reminder_sound")
+  // Popup in-app exclusivo de lembretes de evento (aparece com a aba focada).
   eventReminderPopup    Boolean  @default(true) @map("event_reminder_popup")
-  eventReminderBrowser  Boolean  @default(true) @map("event_reminder_browser")
+  // Canais globais — som e notificação do sistema valem para TODAS as
+  // notificações, inclusive lembretes de evento.
+  notificationSound     Boolean  @default(true) @map("notification_sound")
+  notificationBrowser   Boolean  @default(true) @map("notification_browser")
   updatedAt             DateTime @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)

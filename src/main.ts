@@ -18,7 +18,10 @@ async function bootstrap() {
   // Substitui o logger padrão do NestJS pelo pino em todo o ciclo de vida
   app.useLogger(app.get(Logger));
 
-  app.use(helmet());
+  // O frontend (subdomínio app) embute imagens servidas pela API (subdomínio
+  // api) — perfil, anexos. O default do Helmet (`same-origin`) faz o browser
+  // bloquear essas respostas com ERR_BLOCKED_BY_RESPONSE.NotSameOrigin.
+  app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
   app.use(json({ limit: '1mb' }));
   app.use(urlencoded({ limit: '1mb', extended: true }));
 
