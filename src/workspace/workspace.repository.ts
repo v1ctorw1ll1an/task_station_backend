@@ -261,6 +261,8 @@ export class WorkspaceRepository {
                 priority: true,
                 dueDate: true,
                 startDate: true,
+                allDay: true,
+                timezone: true,
                 createdAt: true,
                 updatedAt: true,
                 columnId: true,

@@ -224,8 +224,10 @@ model Task {
   priority    TaskPriority @default(medium)
   order       Int
   reporterId  String       @map("reporter_id")
-  startDate   DateTime?    @map("start_date") @db.Date
-  dueDate     DateTime?    @map("due_date") @db.Date
+  startDate   DateTime?    @map("start_date") @db.Timestamptz
+  dueDate     DateTime?    @map("due_date") @db.Timestamptz
+  allDay      Boolean      @default(true) @map("all_day")
+  timezone    String       @default("America/Sao_Paulo")
   createdById String       @map("created_by")
   createdAt   DateTime     @default(now()) @map("created_at")
   updatedAt   DateTime     @updatedAt @map("updated_at")

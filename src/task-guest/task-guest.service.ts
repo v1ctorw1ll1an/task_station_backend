@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { FREE } from '../common/limits';
+import { checkDateRange } from '../common/date-range';
 import { markdownToWhatsapp, balanceWhatsappEmphasis } from '../common/markdown-to-whatsapp';
 import { Prisma } from '../generated/prisma/client';
 import { ProjetoRepository } from '../projeto/projeto.repository';
@@ -190,6 +191,8 @@ export class TaskGuestService {
       priority: task.priority,
       startDate: task.startDate,
       dueDate: task.dueDate,
+      allDay: task.allDay,
+      timezone: task.timezone,
       order: task.order,
       column: task.column,
       labels: task.taskLabels.map((l) => ({
@@ -227,6 +230,19 @@ export class TaskGuestService {
     const current = await this.repo.findPublicTaskById(ctx.taskId);
     if (!current) {
       throw new NotFoundException('Task não encontrada');
+    }
+
+    // Mesma regra do evento (término ≥ início), validando o par resultante.
+    const effectiveStart = dto.startDate !== undefined ? dto.startDate : current.startDate;
+    const effectiveDue = dto.dueDate !== undefined ? dto.dueDate : current.dueDate;
+    if (effectiveStart && effectiveDue) {
+      const { invalid, outOfOrder } = checkDateRange(effectiveStart, effectiveDue);
+      if (invalid) {
+        throw new BadRequestException('Datas inválidas');
+      }
+      if (outOfOrder) {
+        throw new BadRequestException('O término deve ser maior ou igual ao início');
+      }
     }
 
     const data: Prisma.TaskUpdateInput = {};
@@ -269,6 +285,14 @@ export class TaskGuestService {
         oldValue: dueDateChanged.oldIso,
         newValue: dueDateChanged.newIso,
       });
+    }
+
+    if (dto.allDay !== undefined && dto.allDay !== current.allDay) {
+      data.allDay = dto.allDay;
+    }
+
+    if (dto.timezone !== undefined && dto.timezone !== current.timezone) {
+      data.timezone = dto.timezone;
     }
 
     if (dto.columnId !== undefined && dto.columnId !== current.column.id) {

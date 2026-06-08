@@ -15,6 +15,7 @@ import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { ListEventsQueryDto } from './dto/list-events-query.dto';
 import { EventMutationScope, EventMutationScopeDto } from './dto/event-mutation-scope.dto';
+import { checkDateRange } from '../common/date-range';
 
 export interface EventOccurrence {
   eventId: string;
@@ -381,12 +382,11 @@ export class EventoService {
   }
 
   private validateDates(startsAt: string, endsAt: string) {
-    const start = new Date(startsAt);
-    const end = new Date(endsAt);
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    const { invalid, outOfOrder } = checkDateRange(startsAt, endsAt);
+    if (invalid) {
       throw new ForbiddenException('Datas inválidas');
     }
-    if (end < start) {
+    if (outOfOrder) {
       throw new ForbiddenException('endsAt deve ser >= startsAt');
     }
   }

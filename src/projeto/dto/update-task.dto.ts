@@ -1,6 +1,7 @@
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsISO8601,
@@ -42,6 +43,15 @@ export class UpdateTaskDto {
   @IsOptional()
   @IsDateString()
   dueDate?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  allDay?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  timezone?: string;
 
   @IsOptional()
   @IsArray()

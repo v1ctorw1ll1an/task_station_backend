@@ -6,7 +6,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
+import { formatInTimeZone } from 'date-fns-tz';
 import { FREE } from '../common/limits';
+import { checkDateRange } from '../common/date-range';
 import { Prisma } from '../generated/prisma/client';
 import { ProjetoRepository } from './projeto.repository';
 import { KanbanGateway } from './kanban.gateway';
@@ -192,6 +194,24 @@ export class ProjetoService {
 
   // ── Tasks ─────────────────────────────────────────────────────────────────────
 
+  /**
+   * Mesma regra do evento (ver checkDateRange / evento.service): término ≥ início.
+   * Aplica quando ambas as datas estão definidas.
+   */
+  private validateTaskDates(
+    startDate: string | Date | null | undefined,
+    dueDate: string | Date | null | undefined,
+  ) {
+    if (!startDate || !dueDate) return;
+    const { invalid, outOfOrder } = checkDateRange(startDate, dueDate);
+    if (invalid) {
+      throw new BadRequestException('Datas inválidas');
+    }
+    if (outOfOrder) {
+      throw new BadRequestException('O término deve ser maior ou igual ao início');
+    }
+  }
+
   async createTask(projectId: string, dto: CreateTaskDto, userId: string) {
     const project = await this.repo.findProjectById(projectId);
     if (!project) {
@@ -202,6 +222,8 @@ export class ProjetoService {
     if (!column) {
       throw new NotFoundException('Coluna não encontrada');
     }
+
+    this.validateTaskDates(dto.startDate, dto.dueDate);
 
     const assigneeIds = [...new Set([userId, ...(dto.assigneeIds ?? [])])];
 
@@ -216,6 +238,8 @@ export class ProjetoService {
       createdById: userId,
       startDate: dto.startDate,
       dueDate: dto.dueDate,
+      allDay: dto.allDay,
+      timezone: dto.timezone,
       labelIds: dto.labelIds,
     });
 
@@ -264,6 +288,11 @@ export class ProjetoService {
       }
     }
 
+    // Valida o par resultante (datas que entram + as que permanecem na task)
+    const effectiveStart = dto.startDate !== undefined ? dto.startDate : task.startDate;
+    const effectiveDue = dto.dueDate !== undefined ? dto.dueDate : task.dueDate;
+    this.validateTaskDates(effectiveStart, effectiveDue);
+
     const updateData: Prisma.TaskUpdateInput = {};
 
     if (dto.title !== undefined) updateData.title = dto.title;
@@ -272,6 +301,8 @@ export class ProjetoService {
     if (dto.startDate !== undefined)
       updateData.startDate = dto.startDate ? new Date(dto.startDate) : null;
     if (dto.dueDate !== undefined) updateData.dueDate = dto.dueDate ? new Date(dto.dueDate) : null;
+    if (dto.allDay !== undefined) updateData.allDay = dto.allDay;
+    if (dto.timezone !== undefined) updateData.timezone = dto.timezone;
 
     await this.repo.updateTask(taskId, updateData);
 
@@ -285,9 +316,14 @@ export class ProjetoService {
 
     const finalTask = await this.repo.findTaskById(taskId, projectId);
 
-    // Record history
-    const fmt = (d: Date | null | undefined): string | null =>
-      d ? d.toISOString().split('T')[0] : null;
+    // Record history. Datas: mostra só a data quando "dia inteiro"; senão data + hora
+    // no timezone da task (mesma semântica de exibição do evento).
+    const fmt = (d: Date | null | undefined, allDay: boolean, tz: string): string | null => {
+      if (!d) return null;
+      return allDay
+        ? formatInTimeZone(d, tz, 'yyyy-MM-dd')
+        : formatInTimeZone(d, tz, 'yyyy-MM-dd HH:mm');
+    };
 
     const entries: { field: string; oldValue: string | null; newValue: string | null }[] = [];
 
@@ -304,18 +340,18 @@ export class ProjetoService {
     if (task.priority !== finalTask!.priority)
       entries.push({ field: 'priority', oldValue: task.priority, newValue: finalTask!.priority });
 
-    if (fmt(task.startDate) !== fmt(finalTask!.startDate))
+    if ((task.startDate?.getTime() ?? null) !== (finalTask!.startDate?.getTime() ?? null))
       entries.push({
         field: 'startDate',
-        oldValue: fmt(task.startDate),
-        newValue: fmt(finalTask!.startDate),
+        oldValue: fmt(task.startDate, task.allDay, task.timezone),
+        newValue: fmt(finalTask!.startDate, finalTask!.allDay, finalTask!.timezone),
       });
 
-    if (fmt(task.dueDate) !== fmt(finalTask!.dueDate))
+    if ((task.dueDate?.getTime() ?? null) !== (finalTask!.dueDate?.getTime() ?? null))
       entries.push({
         field: 'dueDate',
-        oldValue: fmt(task.dueDate),
-        newValue: fmt(finalTask!.dueDate),
+        oldValue: fmt(task.dueDate, task.allDay, task.timezone),
+        newValue: fmt(finalTask!.dueDate, finalTask!.allDay, finalTask!.timezone),
       });
 
     const oldAssignees =
@@ -1024,6 +1060,8 @@ export class ProjetoService {
       createdById: performedById,
       startDate: includeDates ? sourceTask.startDate : null,
       dueDate: includeDates ? sourceTask.dueDate : null,
+      allDay: sourceTask.allDay,
+      timezone: sourceTask.timezone,
       assigneeIds: validAssigneeIds,
       labelIds: resolvedLabelIds,
       comments,

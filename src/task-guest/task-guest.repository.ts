@@ -365,6 +365,8 @@ export class TaskGuestRepository {
         priority: true,
         startDate: true,
         dueDate: true,
+        allDay: true,
+        timezone: true,
         order: true,
         column: { select: { id: true, name: true, color: true, isDone: true } },
         taskAssignees: {

@@ -7,9 +7,11 @@ import {
 import * as bcrypt from 'bcryptjs';
 import * as fs from 'fs';
 import sharp from 'sharp';
+import { fromZonedTime } from 'date-fns-tz';
 import { TaskDateFilter } from './dto/list-my-tasks-query.dto';
 import { MeRepository } from './me.repository';
 import { MeService } from './me.service';
+import { APP_TIMEZONE } from '../common/date-range';
 
 jest.mock('bcryptjs');
 jest.mock('fs', () => ({
@@ -510,7 +512,8 @@ describe('MeService.getMyTasks', () => {
       dueDateTo: '2026-05-31',
     } as any);
     const filter = findUserTasks.mock.calls[0][2];
-    expect(filter.gte).toEqual(new Date('2026-05-01'));
+    // Limite computado no tz da app (não meia-noite UTC) — vide dayRangeInTz.
+    expect(filter.gte).toEqual(fromZonedTime('2026-05-01T00:00:00.000', APP_TIMEZONE));
     expect(filter.lte).toBeInstanceOf(Date);
   });
 
@@ -527,7 +530,7 @@ describe('MeService.getMyTasks', () => {
       startDateTo: '2026-05-31',
     } as any);
     const startFilter = findUserTasks.mock.calls[0][5];
-    expect(startFilter.gte).toEqual(new Date('2026-05-01'));
+    expect(startFilter.gte).toEqual(fromZonedTime('2026-05-01T00:00:00.000', APP_TIMEZONE));
     expect(startFilter.lte).toBeInstanceOf(Date);
   });
 

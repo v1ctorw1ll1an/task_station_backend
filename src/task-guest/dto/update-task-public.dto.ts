@@ -2,6 +2,7 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsOptional,
@@ -40,6 +41,17 @@ export class UpdateTaskPublicDto {
   @IsOptional()
   @IsDateString()
   dueDate?: string | null;
+
+  @ApiPropertyOptional({ description: 'Dia inteiro (sem horário definido)' })
+  @IsOptional()
+  @IsBoolean()
+  allDay?: boolean;
+
+  @ApiPropertyOptional({ description: 'Timezone IANA da task (ex.: America/Sao_Paulo)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  timezone?: string;
 
   @ApiPropertyOptional({ description: 'ID da nova coluna (deve pertencer ao mesmo projeto)' })
   @IsOptional()

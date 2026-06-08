@@ -16,6 +16,9 @@ import { UpdatePasswordDto } from './dto/update-password.dto';
 import { ListMyTasksQueryDto, TaskDateFilter } from './dto/list-my-tasks-query.dto';
 import { SaveWorkspaceOrderDto } from './dto/save-workspace-order.dto';
 import { SaveProjectOrderDto } from './dto/save-project-order.dto';
+import { addDays, format, parseISO } from 'date-fns';
+import { formatInTimeZone } from 'date-fns-tz';
+import { APP_TIMEZONE, dayRangeInTz } from '../common/date-range';
 
 const AVATARS_ROOT = join(process.cwd(), 'uploads', 'avatars');
 const ALLOWED_MIME = new Set([
@@ -129,60 +132,40 @@ export class MeService {
   }
 
   private buildStartDateFilter(dto: ListMyTasksQueryDto): { gte?: Date; lte?: Date } | undefined {
-    if (!dto.startDateFrom && !dto.startDateTo) return undefined;
-    const result: { gte?: Date; lte?: Date } = {};
-    if (dto.startDateFrom) result.gte = new Date(dto.startDateFrom);
-    if (dto.startDateTo) {
-      const to = new Date(dto.startDateTo);
-      to.setHours(23, 59, 59, 999);
-      result.lte = to;
-    }
-    return result;
+    // Limites do dia computados no timezone da app (mesma convenção de
+    // armazenamento da task) — evita off-by-one de meia-noite UTC vs setHours local.
+    return dayRangeInTz(dto.startDateFrom, dto.startDateTo);
   }
 
   private buildDueDateFilter(dto: ListMyTasksQueryDto): { gte?: Date; lte?: Date } | undefined {
     if (!dto.filter) return undefined;
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const endOfDay = (d: Date) => {
-      const end = new Date(d);
-      end.setHours(23, 59, 59, 999);
-      return end;
-    };
+    // "Hoje" ancorado ao dia-mural no timezone da app (não no fuso do servidor,
+    // que em prod normalmente é UTC), depois aritmética de dias sobre a data.
+    const todayStr = formatInTimeZone(new Date(), APP_TIMEZONE, 'yyyy-MM-dd');
+    const today = parseISO(todayStr);
+    const ymd = (d: Date) => format(d, 'yyyy-MM-dd');
 
     switch (dto.filter) {
       case TaskDateFilter.TODAY:
-        return { gte: today, lte: endOfDay(today) };
+        return dayRangeInTz(todayStr, todayStr);
 
       case TaskDateFilter.TOMORROW: {
-        const tomorrow = new Date(today);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        return { gte: tomorrow, lte: endOfDay(tomorrow) };
+        const tomorrow = ymd(addDays(today, 1));
+        return dayRangeInTz(tomorrow, tomorrow);
       }
 
       case TaskDateFilter.THIS_WEEK: {
-        const sunday = new Date(today);
-        sunday.setDate(sunday.getDate() + (7 - sunday.getDay()));
-        return { gte: today, lte: endOfDay(sunday) };
+        const sunday = ymd(addDays(today, 7 - today.getDay()));
+        return dayRangeInTz(todayStr, sunday);
       }
 
-      case TaskDateFilter.OVERDUE: {
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
-        return { lte: endOfDay(yesterday) };
-      }
+      case TaskDateFilter.OVERDUE:
+        // Apenas { lte } = fim de ontem no tz da app.
+        return dayRangeInTz(undefined, ymd(addDays(today, -1)));
 
-      case TaskDateFilter.CUSTOM: {
-        const result: { gte?: Date; lte?: Date } = {};
-        if (dto.dueDateFrom) result.gte = new Date(dto.dueDateFrom);
-        if (dto.dueDateTo) {
-          const to = new Date(dto.dueDateTo);
-          result.lte = endOfDay(to);
-        }
-        return Object.keys(result).length > 0 ? result : undefined;
-      }
+      case TaskDateFilter.CUSTOM:
+        return dayRangeInTz(dto.dueDateFrom, dto.dueDateTo);
 
       default:
         return undefined;

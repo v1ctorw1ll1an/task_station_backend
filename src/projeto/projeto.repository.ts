@@ -12,6 +12,8 @@ const TASK_SELECT = {
   order: true,
   dueDate: true,
   startDate: true,
+  allDay: true,
+  timezone: true,
   updatedAt: true,
   columnId: true,
   projectId: true,
@@ -179,6 +181,8 @@ export class ProjetoRepository {
     createdById: string;
     startDate?: string;
     dueDate?: string;
+    allDay?: boolean;
+    timezone?: string;
     labelIds?: string[];
   }) {
     return this.prisma.$transaction(async (tx) => {
@@ -213,6 +217,8 @@ export class ProjetoRepository {
           createdById: data.createdById,
           startDate: data.startDate ? new Date(data.startDate) : undefined,
           dueDate: data.dueDate ? new Date(data.dueDate) : undefined,
+          ...(data.allDay !== undefined ? { allDay: data.allDay } : {}),
+          ...(data.timezone !== undefined ? { timezone: data.timezone } : {}),
           ...(data.labelIds?.length
             ? { taskLabels: { create: data.labelIds.map((labelId) => ({ labelId })) } }
             : {}),
@@ -865,6 +871,8 @@ export class ProjetoRepository {
     createdById: string;
     startDate: Date | null;
     dueDate: Date | null;
+    allDay: boolean;
+    timezone: string;
     assigneeIds: string[];
     labelIds: string[];
     comments: { userId: string; content: string; createdAt: Date }[];
@@ -921,6 +929,8 @@ export class ProjetoRepository {
           createdById: data.createdById,
           startDate: data.startDate,
           dueDate: data.dueDate,
+          allDay: data.allDay,
+          timezone: data.timezone,
           ...(data.assigneeIds.length > 0
             ? { taskAssignees: { create: data.assigneeIds.map((userId) => ({ userId })) } }
             : {}),

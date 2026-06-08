@@ -36,6 +36,8 @@ function makeTask(overrides: Record<string, unknown> = {}) {
     taskNumber: null,
     dueDate: null,
     startDate: null,
+    allDay: true,
+    timezone: 'America/Sao_Paulo',
     columnId: 'col-1',
     projectId: 'project-1',
     updatedAt: new Date(),

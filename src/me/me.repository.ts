@@ -109,6 +109,8 @@ export class MeRepository {
         priority: true,
         dueDate: true,
         startDate: true,
+        allDay: true,
+        timezone: true,
         createdAt: true,
         column: { select: { id: true, name: true, color: true } },
         project: {
