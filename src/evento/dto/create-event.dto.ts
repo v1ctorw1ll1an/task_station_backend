@@ -91,7 +91,8 @@ export class CreateEventDto {
 
   @IsOptional()
   @IsArray()
-  @ArrayMaxSize(5)
+  // Até 4 lembretes na UI × 2 canais (email + notification) por lembrete = 8.
+  @ArrayMaxSize(8)
   @ValidateNested({ each: true })
   @Type(() => ReminderInputDto)
   reminders?: ReminderInputDto[];
