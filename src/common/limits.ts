@@ -40,7 +40,7 @@ interface TierLimits {
 export const LIMITS: Record<Plan, TierLimits> = {
   free: {
     taskTitle: 120,
-    taskDescription: 1_000,
+    taskDescription: 8_000,
     comment: 250,
     checklistItem: 120,
     broadcastTitle: 120,
