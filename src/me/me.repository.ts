@@ -77,6 +77,7 @@ export class MeRepository {
     companyId: string,
     dueDateFilter?: { gte?: Date; lte?: Date },
     startDateFilter?: { gte?: Date; lte?: Date },
+    titleContains?: string,
   ): Prisma.TaskWhereInput {
     return {
       deletedAt: null,
@@ -89,6 +90,7 @@ export class MeRepository {
       },
       ...(dueDateFilter ? { dueDate: dueDateFilter } : {}),
       ...(startDateFilter ? { startDate: startDateFilter } : {}),
+      ...(titleContains ? { title: { contains: titleContains, mode: 'insensitive' } } : {}),
     };
   }
 
@@ -99,9 +101,16 @@ export class MeRepository {
     page = 1,
     limit = 20,
     startDateFilter?: { gte?: Date; lte?: Date },
+    titleContains?: string,
   ) {
     return this.prisma.task.findMany({
-      where: this.buildUserTasksWhere(userId, companyId, dueDateFilter, startDateFilter),
+      where: this.buildUserTasksWhere(
+        userId,
+        companyId,
+        dueDateFilter,
+        startDateFilter,
+        titleContains,
+      ),
       select: {
         id: true,
         title: true,
@@ -134,9 +143,16 @@ export class MeRepository {
     companyId: string,
     dueDateFilter?: { gte?: Date; lte?: Date },
     startDateFilter?: { gte?: Date; lte?: Date },
+    titleContains?: string,
   ) {
     return this.prisma.task.count({
-      where: this.buildUserTasksWhere(userId, companyId, dueDateFilter, startDateFilter),
+      where: this.buildUserTasksWhere(
+        userId,
+        companyId,
+        dueDateFilter,
+        startDateFilter,
+        titleContains,
+      ),
     });
   }
 

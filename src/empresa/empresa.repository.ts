@@ -332,6 +332,14 @@ export class EmpresaRepository {
           companyId: params.companyId,
           createdById: params.createdById,
         },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+        },
       });
 
       if (params.memberIds.length > 0) {
@@ -367,6 +375,14 @@ export class EmpresaRepository {
           companyId: params.companyId,
           createdById: params.createdById,
         },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+        },
       });
 
       const admin = await tx.user.create({
@@ -376,6 +392,7 @@ export class EmpresaRepository {
           passwordHash: params.adminPasswordHash,
           mustResetPassword: true,
         },
+        select: { id: true, name: true, email: true },
       });
 
       await tx.membership.create({
@@ -414,6 +431,14 @@ export class EmpresaRepository {
           description: params.workspaceDescription,
           companyId: params.companyId,
           createdById: params.createdById,
+        },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
         },
       });
 

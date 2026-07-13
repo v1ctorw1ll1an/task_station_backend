@@ -140,6 +140,16 @@ export class AuthService {
     const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
     const resetUrl = `${frontendUrl}/reset-password?token=${rawToken}`;
 
+    // Em dev, imprime o link no terminal para facilitar o teste sem depender do email.
+    // Nunca em produção — expor o link nos logs permitiria sequestrar a redefinição de senha.
+    const isDev = this.configService.get<string>('NODE_ENV') !== 'production';
+    if (isDev) {
+      this.logger.info(
+        { userId: user.id, email, resetUrl },
+        `🔑 [DEV] Link de recuperação de senha: ${resetUrl}`,
+      );
+    }
+
     await this.mailerService.sendPasswordResetEmail(user.email, resetUrl);
 
     this.logger.info({ userId: user.id, email, expiresAt }, 'Password reset email sent');

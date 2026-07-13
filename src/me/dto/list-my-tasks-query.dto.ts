@@ -40,6 +40,11 @@ export class ListMyTasksQueryDto {
   @IsString()
   startDateTo?: string;
 
+  @ApiPropertyOptional({ description: 'Busca por título da task (ignora filtros de data)' })
+  @IsOptional()
+  @IsString()
+  search?: string;
+
   @ApiPropertyOptional({ default: 1 })
   @IsOptional()
   @Type(() => Number)

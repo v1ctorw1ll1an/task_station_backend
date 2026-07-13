@@ -41,7 +41,7 @@ export class EventoRepository {
     userId: string,
     from: Date,
     to: Date,
-    filters: { companyId?: string; workspaceId?: string } = {},
+    filters: { companyId?: string; workspaceId?: string; title?: string } = {},
   ): Promise<CalendarEventWithRelations[]> {
     const overlapClause: Prisma.CalendarEventWhereInput = {
       OR: [
@@ -70,6 +70,9 @@ export class EventoRepository {
         { deletedAt: null },
         ...(filters.companyId ? [{ companyId: filters.companyId }] : []),
         ...(filters.workspaceId ? [{ workspaceId: filters.workspaceId }] : []),
+        ...(filters.title
+          ? [{ title: { contains: filters.title, mode: 'insensitive' as const } }]
+          : []),
       ],
     };
 

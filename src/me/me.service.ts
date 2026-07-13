@@ -112,8 +112,10 @@ export class MeService {
 
   async getMyTasks(userId: string, dto: ListMyTasksQueryDto) {
     const { companyId, filter, page = 1, limit = 20 } = dto;
-    const dueDateFilter = this.buildDueDateFilter(dto);
-    const startDateFilter = this.buildStartDateFilter(dto);
+    const search = dto.search?.trim() || undefined;
+    // Busca por título ignora os filtros de data (procura em todas as datas).
+    const dueDateFilter = search ? undefined : this.buildDueDateFilter(dto);
+    const startDateFilter = search ? undefined : this.buildStartDateFilter(dto);
 
     const [data, total] = await Promise.all([
       this.repo.findUserTasksByCompany(
@@ -123,11 +125,12 @@ export class MeService {
         page,
         limit,
         startDateFilter,
+        search,
       ),
-      this.repo.countUserTasksByCompany(userId, companyId, dueDateFilter, startDateFilter),
+      this.repo.countUserTasksByCompany(userId, companyId, dueDateFilter, startDateFilter, search),
     ]);
 
-    this.logger.info({ userId, companyId, filter, total }, 'User tasks fetched');
+    this.logger.info({ userId, companyId, filter, search, total }, 'User tasks fetched');
     return { data, total, page, limit };
   }
 

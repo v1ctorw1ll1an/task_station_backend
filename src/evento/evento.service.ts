@@ -31,6 +31,8 @@ export interface EventOccurrence {
   timezone: string;
   visibility: EventVisibility;
   isRecurringInstance: boolean;
+  /** Regra de recorrência da série (null = evento único). Necessária para editar a série. */
+  rrule: string | null;
   isOwner: boolean;
   myRsvpStatus: AttendeeStatus | null;
   attendees: {
@@ -77,6 +79,40 @@ export class EventoService {
 
     occurrences.sort((a, b) => a.startsAt.localeCompare(b.startsAt));
     return occurrences;
+  }
+
+  /**
+   * Busca eventos por título (próprios ou onde é attendee) e expande apenas as
+   * próximas ocorrências (hoje → +12 meses), como a busca do Google Calendar.
+   * Limita ocorrências por evento e no total para não estourar em séries densas.
+   */
+  async searchOccurrences(
+    userId: string,
+    q: string,
+    companyId?: string,
+  ): Promise<EventOccurrence[]> {
+    const term = q.trim();
+    if (term.length < 2) return [];
+
+    const from = new Date();
+    const to = new Date(from);
+    to.setFullYear(to.getFullYear() + 1);
+
+    const events = await this.repo.findOverlapping(userId, from, to, {
+      title: term,
+      ...(companyId ? { companyId } : {}),
+    });
+
+    const PER_EVENT_CAP = 5;
+    const TOTAL_CAP = 50;
+
+    const occurrences: EventOccurrence[] = [];
+    for (const ev of events) {
+      occurrences.push(...this.expandEvent(ev, from, to, userId).slice(0, PER_EVENT_CAP));
+    }
+
+    occurrences.sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+    return occurrences.slice(0, TOTAL_CAP);
   }
 
   private expandEvent(
@@ -137,6 +173,7 @@ export class EventoService {
         timezone: ev.timezone,
         visibility: ev.visibility,
         isRecurringInstance: !!ev.rrule,
+        rrule: ev.rrule,
         isOwner: ev.ownerId === viewerId,
         myRsvpStatus: myAttendee?.status ?? null,
         attendees: ev.attendees.map((a) => ({

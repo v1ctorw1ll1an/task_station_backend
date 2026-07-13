@@ -36,6 +36,19 @@ export class EventoController {
     return this.service.listOccurrences(user.id, query);
   }
 
+  @Get('search')
+  @ApiOperation({
+    summary: 'Busca eventos por título e expande as próximas ocorrências (hoje → +12m)',
+  })
+  @ApiResponse({ status: 200, description: 'Array de ocorrências que casam com a busca' })
+  search(
+    @CurrentUser() user: AuthUser,
+    @Query('q') q: string,
+    @Query('companyId') companyId?: string,
+  ) {
+    return this.service.searchOccurrences(user.id, q ?? '', companyId);
+  }
+
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Cria novo evento (com attendees e reminders inline)' })
