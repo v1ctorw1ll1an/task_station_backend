@@ -3,6 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { json, urlencoded } from 'express';
+import type { IncomingMessage } from 'http';
 import helmet from 'helmet';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
@@ -22,7 +23,19 @@ async function bootstrap() {
   // api) — perfil, anexos. O default do Helmet (`same-origin`) faz o browser
   // bloquear essas respostas com ERR_BLOCKED_BY_RESPONSE.NotSameOrigin.
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
-  app.use(json({ limit: '1mb' }));
+  // Preserva o corpo cru (Buffer) apenas na rota do webhook do Asaas — para
+  // auditoria forense do payload e verificação de assinatura futura.
+  app.use(
+    json({
+      limit: '1mb',
+      verify: (req, _res, buf) => {
+        const r = req as IncomingMessage & { rawBody?: Buffer };
+        if (r.url?.startsWith('/api/v1/billing/webhook')) {
+          r.rawBody = buf;
+        }
+      },
+    }),
+  );
   app.use(urlencoded({ limit: '1mb', extended: true }));
 
   const frontendUrl =

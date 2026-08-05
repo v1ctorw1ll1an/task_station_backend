@@ -74,3 +74,15 @@ export const FREE = LIMITS.free;
  * Espelhado em `frontend/lib/limits.ts`.
  */
 export const TASK_HISTORY_MAX = 15;
+
+/**
+ * Tamanho da senha. NÃO é tier-aware — vale para todo fluxo que define ou troca
+ * senha (ativação por magic link, esqueci-a-senha, troca obrigatória, perfil e
+ * superadmin). Ficava repetido como literal em 6 DTOs, que foi exatamente como
+ * os fluxos divergiram; qualquer mudança agora entra aqui e no espelho
+ * `frontend/lib/limits.ts`.
+ *
+ * O máximo é 72 por limitação do bcrypt (bytes além disso são ignorados).
+ */
+export const PASSWORD_MIN = 6;
+export const PASSWORD_MAX = 72;

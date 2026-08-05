@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsBoolean, IsEmail, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { PASSWORD_MAX, PASSWORD_MIN } from '../../common/limits';
 
 export class UpdateUserDto {
   @ApiPropertyOptional({ description: 'Ativar ou inativar o usuário' })
@@ -26,10 +27,10 @@ export class UpdateUserDto {
   @MaxLength(20)
   phone?: string;
 
-  @ApiPropertyOptional({ description: 'Nova senha do usuário (mínimo 8 caracteres)' })
+  @ApiPropertyOptional({ description: `Nova senha do usuário (mínimo ${PASSWORD_MIN} caracteres)` })
   @IsOptional()
   @IsString()
-  @MinLength(8)
-  @MaxLength(72)
+  @MinLength(PASSWORD_MIN)
+  @MaxLength(PASSWORD_MAX)
   password?: string;
 }

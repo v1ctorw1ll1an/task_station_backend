@@ -46,7 +46,23 @@ export class MeRepository {
   findUserById(userId: string) {
     return this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, name: true, email: true, phone: true, photoUrl: true, createdAt: true },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        photoUrl: true,
+        createdAt: true,
+        tutorialSeenAt: true,
+      },
+    });
+  }
+
+  markTutorialSeen(userId: string) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { tutorialSeenAt: new Date() },
+      select: { tutorialSeenAt: true },
     });
   }
 

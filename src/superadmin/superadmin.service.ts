@@ -11,12 +11,13 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Prisma } from '../generated/prisma/client';
 import { AuthService } from '../auth/auth.service';
 import { MailerService } from '../mailer/mailer.service';
+import { normalizeTaxId } from '../common/tax-id';
 import { SuperadminRepository } from './superadmin.repository';
 import { CreateCompanyDto } from './dto/create-company.dto';
 import { ListCompaniesQueryDto } from './dto/list-companies-query.dto';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
 import { UpdateCompanyDto } from './dto/update-company.dto';
-import { UpdateProfileDto } from './dto/update-profile.dto';
+import { SuperadminUpdateProfileDto } from './dto/update-profile.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
 @Injectable()
@@ -31,7 +32,8 @@ export class SuperadminService {
   ) {}
 
   async createCompany(dto: CreateCompanyDto, createdById: string) {
-    const existingCompany = await this.repo.findCompanyByTaxId(dto.taxId);
+    const taxId = normalizeTaxId(dto.taxId);
+    const existingCompany = await this.repo.findCompanyByTaxId(taxId);
     if (existingCompany) {
       throw new ConflictException('Já existe uma empresa com este CNPJ');
     }
@@ -44,7 +46,7 @@ export class SuperadminService {
 
     if (existingUser) {
       company = await this.repo.createCompanyWithAdmin(
-        { legalName: dto.legalName, taxId: dto.taxId, createdById },
+        { legalName: dto.legalName, taxId, createdById },
         existingUser.id,
       );
       admin = existingUser;
@@ -53,7 +55,7 @@ export class SuperadminService {
       const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
       const tempName = dto.adminName ?? dto.adminEmail.split('@')[0];
       const result = await this.repo.createCompanyWithNewAdmin(
-        { legalName: dto.legalName, taxId: dto.taxId, createdById },
+        { legalName: dto.legalName, taxId, createdById },
         {
           name: tempName,
           email: dto.adminEmail,
@@ -125,6 +127,8 @@ export class SuperadminService {
       throw new NotFoundException('Empresa não encontrada');
     }
 
+    if (dto.taxId) dto.taxId = normalizeTaxId(dto.taxId);
+
     if (dto.taxId && dto.taxId !== company.taxId) {
       const conflict = await this.repo.findCompanyByTaxIdExcluding(dto.taxId, id);
       if (conflict) {
@@ -178,7 +182,7 @@ export class SuperadminService {
     return { data: users, total, page, limit };
   }
 
-  async updateProfile(userId: string, dto: UpdateProfileDto) {
+  async updateProfile(userId: string, dto: SuperadminUpdateProfileDto) {
     const user = await this.repo.findUserById(userId);
     if (!user) {
       throw new NotFoundException('Usuário não encontrado');

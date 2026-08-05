@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsCpfCnpj } from '../../common/validators/is-cpf-cnpj.validator';
 
 export class UpdateCompanyDto {
   @ApiPropertyOptional({ example: 'Acme S.A.' })
@@ -14,5 +15,6 @@ export class UpdateCompanyDto {
   @IsString()
   @MinLength(11)
   @MaxLength(18)
+  @IsCpfCnpj()
   taxId?: string;
 }

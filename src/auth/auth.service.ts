@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -13,7 +14,10 @@ import { TokenType } from '../generated/prisma/client';
 import { MailerService } from '../mailer/mailer.service';
 import { ConsumeFirstAccessDto } from './dto/consume-first-access.dto';
 import { ConfirmResetPasswordDto } from './dto/confirm-reset-password.dto';
+import { RegisterColaboradorDto } from './dto/register-colaborador.dto';
+import { RegisterDto } from './dto/register.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { normalizeTaxId } from '../common/tax-id';
 import { JwtPayload } from './strategies/jwt.strategy';
 import { AuthRepository } from './auth.repository';
 
@@ -64,12 +68,26 @@ export class AuthService {
     return result;
   }
 
-  login(user: { id: string; email: string; isSuperuser: boolean; mustResetPassword: boolean }) {
+  /**
+   * Um assento = um login. Cada entrada gera uma sessão nova e a grava no usuário:
+   * o token anterior (outro PC, outra aba, outro navegador) para de valer no
+   * request seguinte — o último login vence. Ver `JwtStrategy.validate`.
+   */
+  async login(user: {
+    id: string;
+    email: string;
+    isSuperuser: boolean;
+    mustResetPassword: boolean;
+  }) {
+    const sid = crypto.randomUUID();
+    await this.repo.updateUser(user.id, { activeSessionId: sid });
+
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
       isSuperuser: user.isSuperuser,
       mustResetPassword: user.mustResetPassword,
+      sid,
     };
 
     this.logger.info(
@@ -81,6 +99,7 @@ export class AuthService {
       },
       'User logged in',
     );
+    // A sessão anterior deste usuário acabou de ser derrubada (se existia).
 
     return {
       access_token: this.jwtService.sign(payload),
@@ -91,6 +110,148 @@ export class AuthService {
         mustResetPassword: user.mustResetPassword,
       },
     };
+  }
+
+  /** Encerra a sessão única: o token que estava em uso deixa de valer na hora. */
+  async logout(userId: string): Promise<{ message: string }> {
+    await this.repo.updateUser(userId, { activeSessionId: null });
+    this.logger.info({ userId }, 'User logged out');
+    return { message: 'ok' };
+  }
+
+  /**
+   * Auto-cadastro público (self-service): cria a empresa + o usuário dono +
+   * membership admin + assinatura trial de 7 dias e envia o magic link de
+   * primeiro acesso. O dono ativa a conta e define a senha em `/first-access`.
+   * Gated por `PUBLIC_SIGNUP_ENABLED`. NÃO retorna o magic link na resposta —
+   * a verificação por e-mail (posse da caixa) é o que valida o cadastro.
+   */
+  async register(dto: RegisterDto): Promise<{ ok: true }> {
+    if (this.configService.get<string>('PUBLIC_SIGNUP_ENABLED') !== 'true') {
+      throw new NotFoundException('Cannot POST /auth/register');
+    }
+
+    const email = dto.email.trim().toLowerCase();
+    const taxId = normalizeTaxId(dto.taxId);
+
+    const existingCompany = await this.repo.findCompanyByTaxId(taxId);
+    if (existingCompany) {
+      throw new ConflictException('Já existe uma empresa com este CNPJ');
+    }
+
+    const existingUser = await this.repo.findActiveUserByEmail(email);
+    if (existingUser) {
+      throw new ConflictException('E-mail já cadastrado. Faça login.');
+    }
+
+    const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
+    const ownerName = dto.ownerName.trim();
+
+    const { company, owner } = await this.repo.registerCompanyWithOwner(
+      { legalName: dto.legalName.trim(), taxId },
+      {
+        name: ownerName,
+        email,
+        // Só dígitos, mesmo tratamento do taxId: a máscara é do formulário, não do dado.
+        phone: normalizeTaxId(dto.phone),
+        passwordHash: placeholderHash,
+        mustResetPassword: true,
+      },
+    );
+
+    const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
+    const rawToken = await this.generateFirstAccessToken(owner.id);
+    const magicLink = `${frontendUrl}/first-access?token=${rawToken}`;
+
+    // Em dev, imprime o link no terminal para testar sem depender do email.
+    // Nunca em produção — expor o link nos logs permitiria ativar a conta de outrem.
+    const isDev = this.configService.get<string>('NODE_ENV') !== 'production';
+    if (isDev) {
+      this.logger.info(
+        { companyId: company.id, ownerId: owner.id, email, magicLink },
+        `🔑 [DEV] Link de ativação (auto-cadastro): ${magicLink}`,
+      );
+    }
+
+    try {
+      await this.mailerService.sendFirstAccessEmail(email, ownerName, magicLink);
+    } catch (err: unknown) {
+      this.logger.error(
+        { companyId: company.id, ownerId: owner.id, email, err },
+        'Failed to send activation email — company was created successfully',
+      );
+    }
+
+    this.logger.info(
+      { companyId: company.id, ownerId: owner.id, email },
+      'Company self-registered (trial started)',
+    );
+
+    return { ok: true };
+  }
+
+  /**
+   * Auto-cadastro público de colaborador: cria SÓ a conta da pessoa — sem empresa,
+   * sem membership, sem assinatura. Depois de ativar, ela cai na tela que explica o
+   * que pedir ao gerente, e entra na empresa (ou em várias) por convite.
+   * Gated por `PUBLIC_SIGNUP_ENABLED`, igual ao cadastro de empresa.
+   *
+   * Responde `{ ok: true }` mesmo quando o e-mail já existe — aqui não há CNPJ para
+   * justificar um 409, e um erro distinguível transformaria a rota em oráculo de
+   * enumeração de e-mails. Quem é dono da caixa recebe um aviso explicando.
+   */
+  async registerColaborador(dto: RegisterColaboradorDto): Promise<{ ok: true }> {
+    if (this.configService.get<string>('PUBLIC_SIGNUP_ENABLED') !== 'true') {
+      throw new NotFoundException('Cannot POST /auth/register-colaborador');
+    }
+
+    const email = dto.email.trim().toLowerCase();
+    const name = dto.name.trim();
+
+    const existingUser = await this.repo.findActiveUserByEmail(email);
+    if (existingUser) {
+      this.logger.warn({ email }, 'Colaborador self-signup for existing email');
+      try {
+        await this.mailerService.sendAccountAlreadyExistsEmail(email);
+      } catch (err: unknown) {
+        this.logger.error({ email, err }, 'Failed to send account-already-exists email');
+      }
+      return { ok: true };
+    }
+
+    const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
+    const user = await this.repo.createUserWithoutCompany({
+      name,
+      email,
+      passwordHash: placeholderHash,
+    });
+
+    const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
+    const rawToken = await this.generateFirstAccessToken(user.id);
+    const magicLink = `${frontendUrl}/first-access?token=${rawToken}`;
+
+    // Em dev, imprime o link no terminal para testar sem depender do email.
+    // Nunca em produção — expor o link nos logs permitiria ativar a conta de outrem.
+    const isDev = this.configService.get<string>('NODE_ENV') !== 'production';
+    if (isDev) {
+      this.logger.info(
+        { userId: user.id, email, magicLink },
+        `🔑 [DEV] Link de ativação (colaborador): ${magicLink}`,
+      );
+    }
+
+    try {
+      await this.mailerService.sendFirstAccessEmail(email, name, magicLink);
+    } catch (err: unknown) {
+      this.logger.error(
+        { userId: user.id, email, err },
+        'Failed to send activation email — user was created successfully',
+      );
+    }
+
+    this.logger.info({ userId: user.id, email }, 'Colaborador self-registered (no company)');
+
+    return { ok: true };
   }
 
   async resetPassword(userId: string, dto: ResetPasswordDto) {

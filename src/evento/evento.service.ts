@@ -9,6 +9,7 @@ import {
   ReminderMethod,
 } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { BillingAccessService } from '../billing/billing-access.service';
 import { MailerService } from '../mailer/mailer.service';
 import { CalendarEventWithRelations, EventoRepository } from './evento.repository';
 import { CreateEventDto } from './dto/create-event.dto';
@@ -55,9 +56,45 @@ export class EventoService {
     private readonly repo: EventoRepository,
     private readonly prisma: PrismaService,
     private readonly mailer: MailerService,
+    private readonly access: BillingAccessService,
     @InjectPinoLogger(EventoService.name)
     private readonly logger: PinoLogger,
   ) {}
+
+  /**
+   * Barra mutação de evento company-scoped quando a empresa está bloqueada.
+   * Eventos pessoais (sem company/workspace) seguem liberados.
+   */
+  private async assertEventNotBlocked(
+    companyId?: string | null,
+    workspaceId?: string | null,
+  ): Promise<void> {
+    let cid = companyId ?? null;
+    if (!cid && workspaceId) {
+      const ws = await this.prisma.workspace.findUnique({
+        where: { id: workspaceId },
+        select: { companyId: true },
+      });
+      cid = ws?.companyId ?? null;
+    }
+    if (cid) await this.access.assertCanMutate(cid);
+  }
+
+  /** Apagar evento continua liberado em somente-leitura — só a suspensão barra. */
+  private async assertEventDeletable(
+    companyId?: string | null,
+    workspaceId?: string | null,
+  ): Promise<void> {
+    let cid = companyId ?? null;
+    if (!cid && workspaceId) {
+      const ws = await this.prisma.workspace.findUnique({
+        where: { id: workspaceId },
+        select: { companyId: true },
+      });
+      cid = ws?.companyId ?? null;
+    }
+    if (cid) await this.access.assertCanDelete(cid);
+  }
 
   async listOccurrences(userId: string, query: ListEventsQueryDto): Promise<EventOccurrence[]> {
     const from = new Date(query.from);
@@ -204,6 +241,7 @@ export class EventoService {
   }
 
   async create(userId: string, dto: CreateEventDto): Promise<CalendarEventWithRelations> {
+    await this.assertEventNotBlocked(dto.companyId, dto.workspaceId);
     this.validateDates(dto.startsAt, dto.endsAt);
     const tz = dto.timezone ?? 'America/Sao_Paulo';
     if (dto.rrule) this.validateRrule(dto.rrule, dto.startsAt, tz);
@@ -276,6 +314,7 @@ export class EventoService {
     const ev = await this.repo.findById(id);
     if (!ev) throw new NotFoundException('Evento não encontrado');
     this.assertOwner(ev, userId);
+    await this.assertEventNotBlocked(ev.companyId, ev.workspaceId);
 
     const scope = scopeDto.scope ?? EventMutationScope.all;
 
@@ -352,6 +391,7 @@ export class EventoService {
     const ev = await this.repo.findById(id);
     if (!ev) throw new NotFoundException('Evento não encontrado');
     this.assertOwner(ev, userId);
+    await this.assertEventDeletable(ev.companyId, ev.workspaceId);
 
     const scope = scopeDto.scope ?? EventMutationScope.all;
     if (scope === EventMutationScope.single) {

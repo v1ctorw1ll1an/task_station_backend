@@ -86,6 +86,7 @@ function makeRepo(
     createWorkspaceWithMembers: jest.fn(),
     createWorkspaceWithNewAdmin: jest.fn(),
     createWorkspaceWithExistingAdmin: jest.fn(),
+    createUserWithCompanyMembership: jest.fn(),
     findProjectsByWorkspace: jest.fn().mockResolvedValue([]),
     ...overrides,
   } as unknown as jest.Mocked<EmpresaRepository>;
@@ -116,6 +117,16 @@ function makeService(repo: jest.Mocked<EmpresaRepository>) {
   } as unknown as ConfigService;
   const logger = makeLogger();
   const notificacaoService = { notifyUsers: jest.fn(), sendBroadcast: jest.fn() } as any;
+  const billingService = { assertSeatAvailable: jest.fn().mockResolvedValue(undefined) } as any;
+  const conviteService = {
+    criarConvite: jest.fn().mockResolvedValue({
+      inviteId: 'invite-1',
+      email: 'ja.existe@acme.com',
+      expiresAt: new Date('2030-01-01T00:00:00Z'),
+      emailSent: true,
+      inviteLink: 'http://localhost:3000/convite/raw-invite-token',
+    }),
+  } as any;
 
   return {
     service: new EmpresaService(
@@ -124,10 +135,14 @@ function makeService(repo: jest.Mocked<EmpresaRepository>) {
       authService as any,
       configService,
       notificacaoService,
+      billingService,
+      conviteService,
       logger as any,
     ),
     mailerService,
     authService,
+    billingService,
+    conviteService,
   };
 }
 
@@ -791,6 +806,81 @@ describe('EmpresaService.revokeWorkspaceAdmin', () => {
     expect(repo.updateMembership).toHaveBeenCalledWith(
       'ws-membership',
       expect.objectContaining({ deletedAt: expect.any(Date) }),
+    );
+  });
+});
+
+// ── contratarMembro ────────────────────────────────────────────────────────────
+
+describe('EmpresaService.contratarMembro', () => {
+  const dto = { name: 'Maria', email: '  MARIA@acme.com ', phone: '11999998888' };
+
+  it('e-mail sem conta: cria o usuário já vinculado e manda o primeiro acesso', async () => {
+    const repo = makeRepo({
+      findUserByEmail: jest.fn().mockResolvedValue(null),
+      createUserWithCompanyMembership: jest
+        .fn()
+        .mockResolvedValue(makeUser({ id: 'user-9', email: 'maria@acme.com' })),
+    });
+    const { service, mailerService, conviteService } = makeService(repo);
+
+    const result = await service.contratarMembro('company-1', dto, 'admin-1');
+
+    expect(result.mode).toBe('hired');
+    // e-mail normalizado antes de chegar no banco e no envio
+    expect(repo.createUserWithCompanyMembership).toHaveBeenCalledWith(
+      expect.objectContaining({ email: 'maria@acme.com', companyId: 'company-1' }),
+    );
+    expect(mailerService.sendFirstAccessEmail).toHaveBeenCalledWith(
+      'maria@acme.com',
+      'Maria',
+      expect.stringContaining('/first-access?token='),
+    );
+    expect(conviteService.criarConvite).not.toHaveBeenCalled();
+  });
+
+  it('e-mail com conta: manda convite em vez de 409 — é assim que se entra numa 2ª empresa', async () => {
+    const repo = makeRepo({
+      findUserByEmail: jest.fn().mockResolvedValue(makeUser({ id: 'user-2' })),
+      createUserWithCompanyMembership: jest.fn(),
+    });
+    const { service, conviteService } = makeService(repo);
+
+    const result = await service.contratarMembro('company-1', dto, 'admin-1');
+
+    expect(result.mode).toBe('invited');
+    expect(conviteService.criarConvite).toHaveBeenCalledWith({
+      companyId: 'company-1',
+      email: 'maria@acme.com',
+      invitedById: 'admin-1',
+    });
+    // não cria conta nova nem toca no usuário existente
+    expect(repo.createUserWithCompanyMembership).not.toHaveBeenCalled();
+  });
+
+  it('sem assento livre: nada é criado nem convidado', async () => {
+    const repo = makeRepo({ findUserByEmail: jest.fn().mockResolvedValue(null) });
+    const { service, billingService, conviteService } = makeService(repo);
+    billingService.assertSeatAvailable.mockRejectedValue(new BadRequestException('sem assento'));
+
+    await expect(service.contratarMembro('company-1', dto, 'admin-1')).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(repo.createUserWithCompanyMembership).not.toHaveBeenCalled();
+    expect(conviteService.criarConvite).not.toHaveBeenCalled();
+  });
+
+  it('já é membro desta empresa: o convite recusa (ConflictException sobe)', async () => {
+    const repo = makeRepo({
+      findUserByEmail: jest.fn().mockResolvedValue(makeUser({ id: 'user-2' })),
+    });
+    const { service, conviteService } = makeService(repo);
+    conviteService.criarConvite.mockRejectedValue(
+      new ConflictException('Esta pessoa já faz parte da empresa'),
+    );
+
+    await expect(service.contratarMembro('company-1', dto, 'admin-1')).rejects.toThrow(
+      ConflictException,
     );
   });
 });

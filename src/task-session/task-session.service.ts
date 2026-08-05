@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
+import { BillingAccessService } from '../billing/billing-access.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { KanbanGateway } from '../projeto/kanban.gateway';
 import type {
@@ -46,6 +47,7 @@ export class TaskSessionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly gateway: KanbanGateway,
+    private readonly access: BillingAccessService,
     @InjectPinoLogger(TaskSessionService.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -60,6 +62,11 @@ export class TaskSessionService {
     if (!task) {
       throw new NotFoundException('Task não encontrada');
     }
+
+    // Empresa em somente-leitura não INICIA rastreio novo (é criação). Pausar,
+    // retomar e parar seguem liberados — senão o cronômetro ficaria rodando para
+    // sempre em quem já estava com uma sessão aberta.
+    await this.access.assertCanMutate(task.project.workspace.companyId);
 
     // Validate max sessions limit
     const activeCount = await this.prisma.taskSession.count({

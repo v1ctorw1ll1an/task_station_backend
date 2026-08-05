@@ -112,7 +112,13 @@ export class TaskGuestRepository {
             id: true,
             projectId: true,
             deletedAt: true,
-            project: { select: { id: true, deletedAt: true } },
+            project: {
+              select: {
+                id: true,
+                deletedAt: true,
+                workspace: { select: { companyId: true } },
+              },
+            },
           },
         },
       },

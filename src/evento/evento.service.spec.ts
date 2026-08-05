@@ -52,13 +52,19 @@ function makeMailer(): jest.Mocked<MailerService> {
   } as unknown as jest.Mocked<MailerService>;
 }
 
-function makeService(repoOverrides: Partial<Record<keyof EventoRepository, jest.Mock>> = {}) {
+function makeService(
+  repoOverrides: Partial<Record<keyof EventoRepository, jest.Mock>> = {},
+  access: { assertCanMutate: jest.Mock; assertCanDelete: jest.Mock } = {
+    assertCanMutate: jest.fn(),
+    assertCanDelete: jest.fn(),
+  },
+) {
   const repo = makeRepo(repoOverrides);
   const prisma = makePrisma();
   const mailer = makeMailer();
   const logger = makeLogger();
-  const service = new EventoService(repo, prisma, mailer, logger as any);
-  return { service, repo, prisma, mailer, logger };
+  const service = new EventoService(repo, prisma, mailer, access as any, logger as any);
+  return { service, repo, prisma, mailer, logger, access };
 }
 
 function makeEvent(
@@ -162,6 +168,20 @@ describe('EventoService.create', () => {
     await expect(
       service.create('u-1', { ...baseDto, startsAt: 'invalid', endsAt: 'invalid' }),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('lança ForbiddenException quando a empresa do evento está bloqueada (paywall)', async () => {
+    const access = {
+      assertCanMutate: jest
+        .fn()
+        .mockRejectedValue(new ForbiddenException({ code: 'COMPANY_BLOCKED' })),
+      assertCanDelete: jest.fn(),
+    };
+    const { service } = makeService({}, access);
+    await expect(service.create('u-1', { ...baseDto, companyId: 'c-1' })).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(access.assertCanMutate).toHaveBeenCalledWith('c-1');
   });
 
   it('cria evento simples (sem rrule) com defaults', async () => {

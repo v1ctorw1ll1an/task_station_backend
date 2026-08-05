@@ -19,6 +19,8 @@ import { ConsumeFirstAccessDto } from './dto/consume-first-access.dto';
 import { ConfirmResetPasswordDto } from './dto/confirm-reset-password.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { LoginDto } from './dto/login.dto';
+import { RegisterColaboradorDto } from './dto/register-colaborador.dto';
+import { RegisterDto } from './dto/register.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { LocalAuthGuard } from './guards/local-auth.guard';
 import { AuthUser } from './strategies/jwt.strategy';
@@ -41,14 +43,47 @@ export class AuthController {
     return this.authService.login(req.user);
   }
 
+  @Public()
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @Post('register')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Auto-cadastro de empresa (self-service) — inicia trial de 7 dias' })
+  @ApiBody({ type: RegisterDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Empresa criada em trial; link de ativação enviado por e-mail',
+  })
+  @ApiResponse({ status: 404, description: 'Auto-cadastro desabilitado' })
+  @ApiResponse({ status: 409, description: 'CNPJ ou e-mail já cadastrado' })
+  register(@Body() dto: RegisterDto) {
+    return this.authService.register(dto);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  @Post('register-colaborador')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Auto-cadastro de colaborador (self-service) — conta sem empresa, entra por convite',
+  })
+  @ApiBody({ type: RegisterColaboradorDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Se o e-mail estiver livre, a conta é criada e o link de ativação é enviado',
+  })
+  @ApiResponse({ status: 404, description: 'Auto-cadastro desabilitado' })
+  registerColaborador(@Body() dto: RegisterColaboradorDto) {
+    return this.authService.registerColaborador(dto);
+  }
+
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Logout (stateless — invalida sessão no cliente)' })
+  @ApiOperation({ summary: 'Logout — encerra a sessão única do usuário' })
   @ApiResponse({ status: 200, description: 'Logout realizado' })
   @ApiResponse({ status: 401, description: 'Token ausente ou inválido' })
-  logout() {
-    return { message: 'ok' };
+  logout(@Request() req: { user: AuthUser }) {
+    return this.authService.logout(req.user.id);
   }
 
   @Post('reset-password')

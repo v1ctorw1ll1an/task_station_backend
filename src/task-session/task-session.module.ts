@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { BillingModule } from '../billing/billing.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { ProjetoModule } from '../projeto/projeto.module';
 import {
@@ -9,7 +10,7 @@ import {
 import { TaskSessionService } from './task-session.service';
 
 @Module({
-  imports: [PrismaModule, ProjetoModule],
+  imports: [PrismaModule, ProjetoModule, BillingModule],
   controllers: [
     TaskSessionController,
     WorkspaceTaskSessionController,

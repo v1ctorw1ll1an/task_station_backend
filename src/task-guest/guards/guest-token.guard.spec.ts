@@ -1,4 +1,4 @@
-import { ExecutionContext, NotFoundException } from '@nestjs/common';
+import { ExecutionContext, ForbiddenException, NotFoundException } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { TaskGuestRepository } from '../task-guest.repository';
 import { GuestTokenGuard } from './guest-token.guard';
@@ -26,9 +26,12 @@ function makeContext(req: Record<string, unknown>): ExecutionContext {
   return { switchToHttp: () => ({ getRequest: () => req }) } as unknown as ExecutionContext;
 }
 
-function makeGuard(repo: jest.Mocked<TaskGuestRepository>) {
+function makeGuard(
+  repo: jest.Mocked<TaskGuestRepository>,
+  access: { getMode: jest.Mock } = { getMode: jest.fn().mockResolvedValue('ok') },
+) {
   const logger = makeLogger();
-  return { guard: new GuestTokenGuard(repo, logger as any), logger };
+  return { guard: new GuestTokenGuard(repo, access as any, logger as any), logger, access };
 }
 
 function makeActiveGuest(overrides: Record<string, unknown> = {}) {
@@ -40,7 +43,7 @@ function makeActiveGuest(overrides: Record<string, unknown> = {}) {
       id: 'task-1',
       projectId: 'project-1',
       deletedAt: null,
-      project: { id: 'project-1', deletedAt: null },
+      project: { id: 'project-1', deletedAt: null, workspace: { companyId: 'company-1' } },
     },
     ...overrides,
   };
@@ -55,7 +58,7 @@ describe('GuestTokenGuard', () => {
     const { guard } = makeGuard(repo);
     const rawToken = 'abc123xyz';
     const expectedHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-    const req: Record<string, unknown> = { params: { token: rawToken } };
+    const req: Record<string, unknown> = { method: 'GET', params: { token: rawToken } };
 
     await expect(guard.canActivate(makeContext(req))).resolves.toBe(true);
 
@@ -64,8 +67,47 @@ describe('GuestTokenGuard', () => {
       guestId: 'guest-1',
       taskId: 'task-1',
       projectId: 'project-1',
+      companyId: 'company-1',
     });
     expect(repo.touchLastAccessed).toHaveBeenCalledWith('guest-1');
+  });
+
+  // R20: o convidado segue a mesma regra do time — consulta e apaga, não cria/edita.
+  it('em somente-leitura, bloqueia criação/edição pelo link', async () => {
+    const repo = makeRepo({
+      findActiveGuestByTokenHash: jest.fn().mockResolvedValue(makeActiveGuest()),
+    });
+    const access = { getMode: jest.fn().mockResolvedValue('read_only') };
+    const { guard } = makeGuard(repo, access);
+    await expect(
+      guard.canActivate(makeContext({ method: 'PATCH', params: { token: 'ok' } })),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(access.getMode).toHaveBeenCalledWith('company-1');
+    expect(repo.touchLastAccessed).not.toHaveBeenCalled();
+  });
+
+  it('em somente-leitura, libera GET e DELETE pelo link', async () => {
+    for (const method of ['GET', 'DELETE']) {
+      const repo = makeRepo({
+        findActiveGuestByTokenHash: jest.fn().mockResolvedValue(makeActiveGuest()),
+      });
+      const access = { getMode: jest.fn().mockResolvedValue('read_only') };
+      const { guard } = makeGuard(repo, access);
+      await expect(
+        guard.canActivate(makeContext({ method, params: { token: 'ok' } })),
+      ).resolves.toBe(true);
+    }
+  });
+
+  it('empresa suspensa: o link não abre nem para leitura', async () => {
+    const repo = makeRepo({
+      findActiveGuestByTokenHash: jest.fn().mockResolvedValue(makeActiveGuest()),
+    });
+    const access = { getMode: jest.fn().mockResolvedValue('suspended') };
+    const { guard } = makeGuard(repo, access);
+    await expect(
+      guard.canActivate(makeContext({ method: 'GET', params: { token: 'ok' } })),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   // Token ausente — mesmo erro genérico que token inválido (não vazar diferenciação)

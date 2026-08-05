@@ -4,10 +4,16 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
 
-describe('AppController (e2e)', () => {
+/**
+ * Sanidade do boot: a aplicação inteira sobe e responde. Nasceu como o teste de
+ * scaffold do Nest (esperando um `AppController` com "Hello World!" que nunca
+ * existiu neste projeto) e falhava desde sempre — agora aponta para o `/health`,
+ * que é a rota pública de verdade.
+ */
+describe('Boot da aplicação (e2e)', () => {
   let app: INestApplication<App>;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -16,7 +22,12 @@ describe('AppController (e2e)', () => {
     await app.init();
   });
 
-  it('/ (GET)', () => {
-    return request(app.getHttpServer()).get('/').expect(200).expect('Hello World!');
+  afterAll(async () => {
+    await app?.close();
+  });
+
+  it('responde no /health sem autenticação', async () => {
+    const res = await request(app.getHttpServer()).get('/health').expect(200);
+    expect(res.body).toHaveProperty('status');
   });
 });

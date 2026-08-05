@@ -11,6 +11,8 @@ import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { AuthService } from '../auth/auth.service';
+import { BillingService } from '../billing/billing.service';
+import { ConviteService } from '../convite/convite.service';
 import { MailerService } from '../mailer/mailer.service';
 import { NotificacaoService } from '../notificacao/notificacao.service';
 import { EmpresaRepository } from './empresa.repository';
@@ -30,6 +32,8 @@ export class EmpresaService {
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
     private readonly notificacaoService: NotificacaoService,
+    private readonly billingService: BillingService,
+    private readonly conviteService: ConviteService,
     @InjectPinoLogger(EmpresaService.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -158,16 +162,51 @@ export class EmpresaService {
 
   // ── Membros ───────────────────────────────────────────────────────────────────
 
+  /**
+   * Porta única para trazer alguém para a empresa. O caminho depende de o e-mail já
+   * ter conta no TaskDY:
+   *
+   * - **sem conta** → cria a conta já vinculada à empresa e manda o magic link de
+   *   primeiro acesso (`mode: 'hired'`);
+   * - **com conta** → manda um convite para entrar nesta empresa (`mode: 'invited'`).
+   *   Antes isto era 409, o que deixava uma conta existente sem nenhum caminho para
+   *   entrar numa segunda empresa.
+   *
+   * No caminho `invited`, `name`/`phone` são ignorados (a conta já existe e é dela),
+   * e a resposta não devolve dado nenhum do usuário além do e-mail que o admin digitou.
+   */
   async contratarMembro(companyId: string, dto: ContratarMembroDto, performedById: string) {
-    const existing = await this.repo.findUserByEmail(dto.email);
+    // Assento comprado é a unidade cobrada: bloqueia se todos já estão ocupados.
+    await this.billingService.assertSeatAvailable(companyId);
+
+    const email = dto.email.trim().toLowerCase();
+    const existing = await this.repo.findUserByEmail(email);
+
     if (existing) {
-      throw new ConflictException('Email já cadastrado no sistema');
+      const convite = await this.conviteService.criarConvite({
+        companyId,
+        email,
+        invitedById: performedById,
+      });
+
+      this.logger.info(
+        { companyId, performedById, inviteId: convite.inviteId, emailSent: convite.emailSent },
+        'Existing account invited to company',
+      );
+
+      return {
+        mode: 'invited' as const,
+        email: convite.email,
+        expiresAt: convite.expiresAt,
+        emailSent: convite.emailSent,
+        inviteLink: convite.inviteLink,
+      };
     }
 
     const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
     const user = await this.repo.createUserWithCompanyMembership({
       name: dto.name,
-      email: dto.email,
+      email,
       phone: dto.phone,
       passwordHash: placeholderHash,
       companyId,
@@ -179,17 +218,22 @@ export class EmpresaService {
 
     let emailSent = false;
     try {
-      await this.mailerService.sendFirstAccessEmail(dto.email, dto.name, magicLink);
+      await this.mailerService.sendFirstAccessEmail(email, dto.name, magicLink);
       emailSent = true;
     } catch (err: unknown) {
-      this.logger.error({ email: dto.email, err }, 'Failed to send first access email');
+      this.logger.error({ email, err }, 'Failed to send first access email');
     }
 
     this.logger.info(
       { companyId, userId: user.id, performedById, emailSent },
       'Member hired to company',
     );
-    return { user, emailSent, magicLink: emailSent ? null : magicLink };
+    return {
+      mode: 'hired' as const,
+      user,
+      emailSent,
+      magicLink: emailSent ? null : magicLink,
+    };
   }
 
   async listMembers(companyId: string, query: ListMembersQueryDto) {

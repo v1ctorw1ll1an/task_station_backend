@@ -52,6 +52,7 @@ function makeRepo(
     findActiveWorkspacesByIds: jest.fn(),
     findUserById: jest.fn(),
     updateUserById: jest.fn(),
+    markTutorialSeen: jest.fn(),
     findUserPasswordHash: jest.fn(),
     updateUserPasswordHash: jest.fn(),
     findUserTasksByCompany: jest.fn(),
@@ -69,7 +70,18 @@ function makeLogger() {
 
 function makeService(repo: jest.Mocked<MeRepository>) {
   const logger = makeLogger();
-  return new MeService(repo, logger as any);
+  const billingAccess = {
+    isBlocked: jest.fn().mockResolvedValue(false),
+    getSummary: jest.fn().mockResolvedValue({
+      status: 'active',
+      blocked: false,
+      blockReason: null,
+      needsSubscription: false,
+      trialEndsAt: null,
+    }),
+    invalidate: jest.fn(),
+  };
+  return new MeService(repo, billingAccess as any, logger as any);
 }
 
 // ── getMyCompanies ─────────────────────────────────────────────────────────────
@@ -586,5 +598,54 @@ describe('MeService.saveProjectOrder', () => {
       projectIds: ['p-1', 'p-2'],
     } as any);
     expect(repo.upsertProjectOrder).toHaveBeenCalledWith('u-1', 'ws-1', ['p-1', 'p-2']);
+  });
+});
+
+// ── markTutorialSeen ───────────────────────────────────────────────────────────
+
+describe('MeService.markTutorialSeen', () => {
+  it('grava a data e devolve o marcador', async () => {
+    const quando = new Date('2026-08-03T12:00:00Z');
+    const repo = makeRepo({
+      markTutorialSeen: jest.fn().mockResolvedValue({ tutorialSeenAt: quando }),
+    });
+    const service = makeService(repo);
+
+    await expect(service.markTutorialSeen('u-1')).resolves.toEqual({ tutorialSeenAt: quando });
+    expect(repo.markTutorialSeen).toHaveBeenCalledWith('u-1');
+  });
+
+  it('é idempotente — concluir de novo só reescreve a data', async () => {
+    const repo = makeRepo({
+      markTutorialSeen: jest.fn().mockResolvedValue({ tutorialSeenAt: new Date() }),
+    });
+    const service = makeService(repo);
+
+    await service.markTutorialSeen('u-1');
+    await service.markTutorialSeen('u-1');
+
+    expect(repo.markTutorialSeen).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ── getProfile ─────────────────────────────────────────────────────────────────
+
+describe('MeService.getProfile', () => {
+  it('devolve tutorialSeenAt junto do perfil (o front decide se abre o tour)', async () => {
+    const repo = makeRepo({
+      findUserById: jest.fn().mockResolvedValue({
+        id: 'u-1',
+        name: 'Maria',
+        email: 'maria@acme.com',
+        phone: null,
+        photoUrl: null,
+        createdAt: new Date(),
+        tutorialSeenAt: null,
+      }),
+    });
+    const service = makeService(repo);
+
+    const perfil = await service.getProfile('u-1');
+    expect(perfil).toHaveProperty('tutorialSeenAt', null);
   });
 });

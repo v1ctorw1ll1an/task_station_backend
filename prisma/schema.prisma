@@ -87,6 +87,67 @@ enum ReminderMethod {
   @@map("reminder_method")
 }
 
+// ── Billing (cobrança por empresa — Asaas) ───────────────────────────────────
+
+enum SubscriptionStatus {
+  trial // 7 dias de acesso total, sem cartão
+  active // assinatura paga no ciclo vigente
+  past_due // renovação mensal falhou; em carência (escrita ainda liberada)
+  readonly // somente leitura — trial expirado, carência esgotada ou anual vencido
+  canceled // cancelado e ciclo pago encerrado (comporta-se como readonly)
+  courtesy // isento pelo superusuário (empresas legadas + cortesias)
+
+  @@map("subscription_status")
+}
+
+enum BillingMethod {
+  monthly_card
+  annual_pix
+  annual_card
+
+  @@map("billing_method")
+}
+
+enum ChargeType {
+  subscription // 1ª cobrança / assinatura
+  renewal // renovação de ciclo
+  seat // compra de assento (valor cheio — não há mais proração)
+
+  @@map("charge_type")
+}
+
+/**
+ * Assinatura de assentos adicionais no plano ANUAL. Cada compra vira uma
+ * assinatura própria no Asaas, com data de renovação própria — é a decisão que
+ * abandona o "ciclo único" para os assentos extras do anual.
+ */
+enum SeatAddonStatus {
+  pending // cobrança emitida, ainda não paga — não dá direito a assento
+  active // paga e vigente
+  past_due // renovação não paga, dentro da carência (ainda conta)
+  canceled // encerrada — não conta mais
+
+  @@map("seat_addon_status")
+}
+
+enum ChargeStatus {
+  pending
+  paid
+  failed
+  expired
+  canceled
+  refunded
+
+  @@map("charge_status")
+}
+
+enum PaymentKind {
+  credit_card
+  pix
+
+  @@map("payment_kind")
+}
+
 model User {
   id                String    @id @default(uuid())
   email             String    @unique
@@ -97,6 +158,13 @@ model User {
   isSuperuser       Boolean   @default(false) @map("is_superuser")
   mustResetPassword Boolean   @default(true) @map("must_reset_password")
   isActive          Boolean   @default(true) @map("is_active")
+  // Um assento = um login: guarda a ÚNICA sessão válida do usuário. Entrar em outro
+  // lugar sobrescreve este id e derruba a sessão anterior no request seguinte.
+  activeSessionId   String?   @map("active_session_id")
+  // Quando o usuário terminou (ou pulou) o tutorial de primeiros passos. Nulo = nunca
+  // viu, e o tour abre sozinho no próximo acesso. Timestamp em vez de boolean para
+  // responder "quando", como os demais marcos do schema (usedAt, acceptedAt).
+  tutorialSeenAt    DateTime? @map("tutorial_seen_at") @db.Timestamptz
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
   deletedAt         DateTime? @map("deleted_at")
@@ -124,6 +192,8 @@ model User {
   ownedEvents         CalendarEvent[]         @relation("CalendarEventOwner")
   eventAttendees      CalendarEventAttendee[]
   invitedTaskGuests   TaskGuest[]             @relation("TaskGuestInvitedBy")
+  sentInvites         CompanyInvite[]         @relation("CompanyInviteInvitedBy")
+  acceptedInvites     CompanyInvite[]         @relation("CompanyInviteAcceptedBy")
 
   @@index([deletedAt])
   @@map("users")
@@ -142,21 +212,56 @@ model Company {
   createdBy      User            @relation("CompanyCreatedBy", fields: [createdById], references: [id])
   workspaces     Workspace[]
   calendarEvents CalendarEvent[]
+  subscription   Subscription?
+  invites        CompanyInvite[]
+  seatAddons     SeatAddon[]
 
   @@map("companies")
 }
 
+/**
+ * Convite para entrar numa empresa já existente — o caminho de quem NÃO está
+ * criando empresa nova (`/auth/register`), e o único jeito de uma conta que já
+ * existe entrar numa segunda empresa.
+ * Vinculado ao e-mail: só quem estiver logado com `email` consegue aceitar, então
+ * repassar o link não dá acesso a terceiro. Guarda o SHA-256 do token (nunca o
+ * token cru), mesmo padrão do `PasswordResetToken` — dump vazado não vira convite
+ * válido. Convite pendente NÃO reserva assento: o assento é verificado na criação
+ * (falha rápido pro admin) e de novo no aceite, que é o momento que vale.
+ */
+model CompanyInvite {
+  id           String         @id @default(uuid())
+  companyId    String         @map("company_id")
+  email        String
+  tokenHash    String         @unique @map("token_hash")
+  role         MembershipRole @default(member)
+  invitedById  String         @map("invited_by")
+  expiresAt    DateTime       @map("expires_at")
+  acceptedAt   DateTime?      @map("accepted_at")
+  acceptedById String?        @map("accepted_by")
+  revokedAt    DateTime?      @map("revoked_at")
+  createdAt    DateTime       @default(now()) @map("created_at")
+
+  company    Company @relation(fields: [companyId], references: [id])
+  invitedBy  User    @relation("CompanyInviteInvitedBy", fields: [invitedById], references: [id])
+  acceptedBy User?   @relation("CompanyInviteAcceptedBy", fields: [acceptedById], references: [id])
+
+  @@index([companyId, acceptedAt, revokedAt])
+  @@index([email])
+  @@map("company_invites")
+}
+
 model Workspace {
-  id                 String    @id @default(uuid())
-  companyId          String    @map("company_id")
-  name               String
-  description        String?
-  isActive           Boolean   @default(true) @map("is_active")
-  storageQuotaBytes  BigInt    @default(10737418240) @map("storage_quota_bytes")
-  createdById        String    @map("created_by")
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime  @updatedAt @map("updated_at")
-  deletedAt          DateTime? @map("deleted_at")
+  id                String    @id @default(uuid())
+  companyId         String    @map("company_id")
+  name              String
+  description       String?
+  isActive          Boolean   @default(true) @map("is_active")
+  storageQuotaBytes BigInt    @default(10737418240) @map("storage_quota_bytes")
+  createdById       String    @map("created_by")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+  deletedAt         DateTime? @map("deleted_at")
 
   company         Company              @relation(fields: [companyId], references: [id])
   createdBy       User                 @relation("WorkspaceCreatedBy", fields: [createdById], references: [id])
@@ -297,19 +402,26 @@ model TaskAssignee {
 }
 
 model Membership {
-  id           String         @id @default(uuid())
-  userId       String         @map("user_id")
-  resourceType ResourceType   @map("resource_type")
-  resourceId   String         @map("resource_id")
-  role         MembershipRole
-  createdAt    DateTime       @default(now()) @map("created_at")
-  updatedAt    DateTime       @updatedAt @map("updated_at")
-  deletedAt    DateTime?      @map("deleted_at")
+  id                 String         @id @default(uuid())
+  userId             String         @map("user_id")
+  resourceType       ResourceType   @map("resource_type")
+  resourceId         String         @map("resource_id")
+  role               MembershipRole
+  createdAt          DateTime       @default(now()) @map("created_at")
+  updatedAt          DateTime       @updatedAt @map("updated_at")
+  deletedAt          DateTime?      @map("deleted_at")
+  // Assento devolvido na próxima renovação (R19): o admin escolheu quem sai, mas o
+  // ciclo já está pago — a pessoa continua com acesso até a renovação, quando o
+  // pagamento confirmado efetiva a saída.
+  scheduledRemovalAt DateTime?      @map("scheduled_removal_at") @db.Timestamptz
 
   user User @relation(fields: [userId], references: [id])
 
   @@index([userId, resourceType, resourceId])
   @@index([resourceType, resourceId])
+  // Varredura do cron que efetiva as saídas agendadas. Existiu, foi derrubado junto
+  // com o índice parcial de `billing_charges` em `20260730124301_company_invites`.
+  @@index([scheduledRemovalAt])
   @@map("memberships")
 }
 
@@ -443,21 +555,21 @@ model Notification {
 }
 
 model NotificationPreference {
-  id                    String   @id @default(uuid())
-  userId                String   @unique @map("user_id")
-  adminBroadcast        Boolean  @default(true) @map("admin_broadcast")
-  mention               Boolean  @default(true)
-  taskAssigned          Boolean  @default(true) @map("task_assigned")
-  taskComment           Boolean  @default(true) @map("task_comment")
-  taskUpdated           Boolean  @default(true) @map("task_updated")
-  eventReminder         Boolean  @default(true) @map("event_reminder")
+  id                  String   @id @default(uuid())
+  userId              String   @unique @map("user_id")
+  adminBroadcast      Boolean  @default(true) @map("admin_broadcast")
+  mention             Boolean  @default(true)
+  taskAssigned        Boolean  @default(true) @map("task_assigned")
+  taskComment         Boolean  @default(true) @map("task_comment")
+  taskUpdated         Boolean  @default(true) @map("task_updated")
+  eventReminder       Boolean  @default(true) @map("event_reminder")
   // Popup in-app exclusivo de lembretes de evento (aparece com a aba focada).
-  eventReminderPopup    Boolean  @default(true) @map("event_reminder_popup")
+  eventReminderPopup  Boolean  @default(true) @map("event_reminder_popup")
   // Canais globais — som e notificação do sistema valem para TODAS as
   // notificações, inclusive lembretes de evento.
-  notificationSound     Boolean  @default(true) @map("notification_sound")
-  notificationBrowser   Boolean  @default(true) @map("notification_browser")
-  updatedAt             DateTime @updatedAt @map("updated_at")
+  notificationSound   Boolean  @default(true) @map("notification_sound")
+  notificationBrowser Boolean  @default(true) @map("notification_browser")
+  updatedAt           DateTime @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -566,10 +678,10 @@ model CalendarEvent {
   updatedAt       DateTime        @updatedAt @map("updated_at")
   deletedAt       DateTime?       @map("deleted_at")
 
-  owner      User                     @relation("CalendarEventOwner", fields: [ownerId], references: [id])
-  company    Company?                 @relation(fields: [companyId], references: [id])
-  workspace  Workspace?               @relation(fields: [workspaceId], references: [id])
-  task       Task?                    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  owner       User                      @relation("CalendarEventOwner", fields: [ownerId], references: [id])
+  company     Company?                  @relation(fields: [companyId], references: [id])
+  workspace   Workspace?                @relation(fields: [workspaceId], references: [id])
+  task        Task?                     @relation(fields: [taskId], references: [id], onDelete: SetNull)
   attendees   CalendarEventAttendee[]
   reminders   CalendarEventReminder[]
   exceptions  CalendarEventException[]
@@ -679,4 +791,195 @@ model TaskGuest {
   @@index([taskId, deletedAt])
   @@index([tokenHash])
   @@map("task_guests")
+}
+
+// ── Billing ──────────────────────────────────────────────────────────────────
+// Uma assinatura por empresa (ciclo único). Assentos comprados = quantidade
+// cobrada; ocupados = count de Membership ativas (resourceType=company). Estado
+// canônico da assinatura vem dos webhooks do Asaas.
+
+model Subscription {
+  id                       String             @id @default(uuid())
+  companyId                String             @unique @map("company_id")
+  status                   SubscriptionStatus @default(trial)
+  method                   BillingMethod?
+  // Assentos do PLANO — os que estão dentro do valor da recorrência (mensal) ou da
+  // contratação anual. Não inclui os assentos comprados avulsos no anual: esses vivem
+  // em `SeatAddon` e são contados por `addonSeats`.
+  purchasedSeats           Int                @default(1) @map("purchased_seats")
+  seatsAtNextRenewal       Int?               @map("seats_at_next_renewal")
+  // Soma dos assentos dos `SeatAddon` que contam (active + past_due). Desnormalizado
+  // de propósito: `assertSeatAvailable` roda no caminho quente de contratar membro e
+  // não pode ganhar mais uma query. O cron reconcilia contra a tabela.
+  addonSeats               Int                @default(0) @map("addon_seats")
+  trialEndsAt              DateTime?          @map("trial_ends_at") @db.Timestamptz
+  currentPeriodStart       DateTime?          @map("current_period_start") @db.Timestamptz
+  currentPeriodEnd         DateTime?          @map("current_period_end") @db.Timestamptz
+  graceUntil               DateTime?          @map("grace_until") @db.Timestamptz
+  cancelAtPeriodEnd        Boolean            @default(false) @map("cancel_at_period_end")
+  // Somente-leitura manual: a empresa usa o app sem criar/alterar (R20).
+  superadminLocked         Boolean            @default(false) @map("superadmin_locked")
+  // Suspensão total (fraude/abuso/ordem judicial): fecha a porta — nem leitura.
+  // É ação própria do superusuário, não efeito colateral do somente-leitura (R44).
+  accessSuspended          Boolean            @default(false) @map("access_suspended")
+  asaasCustomerId          String?            @map("asaas_customer_id")
+  asaasSubscriptionId      String?            @map("asaas_subscription_id")
+  // Perfil de cobrança do titular, exigido ANTES de qualquer pagamento (é o que o
+  // Asaas leva para o cadastro do cliente e para a página de checkout). NÃO é dado
+  // de cartão: com o checkout hospedado, número/CVV/validade nunca chegam nem ao
+  // backend nem ao frontend.
+  billingName              String?            @map("billing_name")
+  billingEmail             String?            @map("billing_email")
+  billingCpfCnpj           String?            @map("billing_cpf_cnpj")
+  billingPostalCode        String?            @map("billing_postal_code")
+  billingStreet            String?            @map("billing_street")
+  billingAddressNumber     String?            @map("billing_address_number")
+  billingAddressComplement String?            @map("billing_address_complement")
+  billingNeighborhood      String?            @map("billing_neighborhood")
+  billingCity              String?            @map("billing_city")
+  billingState             String?            @map("billing_state")
+  billingPhone             String?            @map("billing_phone")
+  canceledAt               DateTime?          @map("canceled_at") @db.Timestamptz
+  createdAt                DateTime           @default(now()) @map("created_at")
+  updatedAt                DateTime           @updatedAt @map("updated_at")
+
+  company    Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  charges    BillingCharge[]
+  notices    BillingNotice[]
+  seatAddons SeatAddon[]
+
+  @@index([status, currentPeriodEnd])
+  @@index([status, trialEndsAt])
+  @@map("subscriptions")
+}
+
+/**
+ * Assentos adicionais comprados no plano ANUAL. Cada compra vira uma assinatura
+ * YEARLY própria no Asaas, com renovação na data da compra — por isso uma empresa
+ * pode ter várias, com datas diferentes da renovação do plano.
+ * O assento só passa a valer quando a primeira cobrança é paga (`active`); até lá
+ * o registro fica `pending` e não entra em `Subscription.addonSeats`.
+ */
+model SeatAddon {
+  id             String          @id @default(uuid())
+  companyId      String          @map("company_id")
+  subscriptionId String          @map("subscription_id")
+  seats          Int
+  // Preço unitário no momento da compra. Guardado para que um reajuste futuro não
+  // reescreva o histórico do que o cliente contratou.
+  unitPriceCents Int             @map("unit_price_cents")
+  amountCents    Int             @map("amount_cents")
+  paymentKind    PaymentKind     @map("payment_kind")
+  status         SeatAddonStatus @default(pending)
+
+  asaasSubscriptionId String?   @unique @map("asaas_subscription_id")
+  currentPeriodStart  DateTime? @map("current_period_start") @db.Timestamptz
+  currentPeriodEnd    DateTime? @map("current_period_end") @db.Timestamptz
+  graceUntil          DateTime? @map("grace_until") @db.Timestamptz
+  activatedAt         DateTime? @map("activated_at") @db.Timestamptz
+  canceledAt          DateTime? @map("canceled_at") @db.Timestamptz
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company      Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  subscription Subscription    @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  charges      BillingCharge[]
+
+  @@index([companyId, status])
+  @@index([status, currentPeriodEnd])
+  @@map("seat_addons")
+}
+
+model BillingCharge {
+  id                String       @id @default(uuid())
+  subscriptionId    String       @map("subscription_id")
+  companyId         String       @map("company_id")
+  seatAddonId       String?      @map("seat_addon_id")
+  type              ChargeType
+  paymentKind       PaymentKind  @map("payment_kind")
+  status            ChargeStatus @default(pending)
+  amountCents       Int          @map("amount_cents")
+  installments      Int          @default(1)
+  seats             Int
+  seatsDelta        Int?         @map("seats_delta")
+  periodStart       DateTime?    @map("period_start") @db.Timestamptz
+  periodEnd         DateTime?    @map("period_end") @db.Timestamptz
+  asaasPaymentId    String?      @unique @map("asaas_payment_id")
+  // Checkout hospedado do Asaas — o caminho de TODO pagamento com cartão. Guardamos
+  // o link para poder devolvê-lo ("continuar pagamento") em vez de abrir um segundo
+  // checkout do mesmo intento, e a validade para o cron encerrar o que expirou.
+  asaasCheckoutId   String?      @unique @map("asaas_checkout_id")
+  checkoutUrl       String?      @map("checkout_url")
+  checkoutExpiresAt DateTime?    @map("checkout_expires_at") @db.Timestamptz
+  pixPayload        String?      @map("pix_payload")
+  pixEncodedImage   String?      @map("pix_encoded_image")
+  pixExpiresAt      DateTime?    @map("pix_expires_at") @db.Timestamptz
+  invoiceUrl        String?      @map("invoice_url")
+  paidAt            DateTime?    @map("paid_at") @db.Timestamptz
+  failedAt          DateTime?    @map("failed_at") @db.Timestamptz
+  failReason        String?      @map("fail_reason")
+  metadata          Json?
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  seatAddon    SeatAddon?   @relation(fields: [seatAddonId], references: [id], onDelete: SetNull)
+
+  // Índice único PARCIAL (SQL cru na migration, o Prisma não gera): no máximo UMA
+  // cobrança aberta por (assinatura, tipo) entre as iniciadas pelo cliente — trava
+  // final contra cobrança duplicada.
+  //   billing_charges_one_open_per_intent
+  //   UNIQUE (subscription_id, type) WHERE status = 'pending'
+  //     AND type IN ('subscription','seat')
+  //
+  // ATENÇÃO: `prisma migrate dev` não conhece índices em SQL cru e os DERRUBA ao
+  // reconciliar o schema — foi o que aconteceu em `20260730124301_company_invites`,
+  // que apagou este índice sem ninguém notar. `billing.repository.spec.ts` tem um
+  // teste que consulta `pg_indexes` justamente para essa regressão não voltar.
+  @@index([companyId, createdAt])
+  @@index([status, pixExpiresAt])
+  @@index([status, checkoutExpiresAt])
+  @@map("billing_charges")
+}
+
+// Inbox de webhooks do Asaas: idempotência (o mesmo evento não é processado duas
+// vezes) + fila de reprocessamento. O evento é gravado ANTES de ser processado —
+// se falhar, fica `failed` com `nextAttemptAt` e o cron reprocessa com backoff;
+// esgotadas as tentativas vira `dead` (exige ação humana).
+model WebhookEvent {
+  id              String    @id @default(uuid())
+  asaasEventId    String    @unique @map("asaas_event_id")
+  type            String
+  asaasPaymentId  String?   @map("asaas_payment_id")
+  // Eventos CHECKOUT_* não trazem cobrança — trazem o checkout. Coluna própria em
+  // vez de reaproveitar `asaasPaymentId`, cuja semântica o painel do superadmin usa.
+  asaasCheckoutId String?   @map("asaas_checkout_id")
+  payload         Json
+  status          String    @default("received") // received | processed | ignored | failed | dead
+  attempts        Int       @default(0)
+  nextAttemptAt   DateTime? @map("next_attempt_at") @db.Timestamptz
+  processedAt     DateTime? @map("processed_at") @db.Timestamptz
+  error           String?
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  @@index([type, createdAt])
+  @@index([status, nextAttemptAt])
+  @@index([asaasCheckoutId])
+  @@map("webhook_events")
+}
+
+// Idempotência de e-mails disparados pelo cron (um aviso por (assinatura, tipo,
+// vencimento de referência)).
+model BillingNotice {
+  id             String   @id @default(uuid())
+  subscriptionId String   @map("subscription_id")
+  kind           String
+  anchorAt       DateTime @map("anchor_at") @db.Timestamptz
+  sentAt         DateTime @default(now()) @map("sent_at")
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@unique([subscriptionId, kind, anchorAt])
+  @@map("billing_notices")
 }

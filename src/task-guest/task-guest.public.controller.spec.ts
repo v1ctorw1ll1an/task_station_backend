@@ -9,7 +9,7 @@ function makeService(overrides: Partial<Record<keyof TaskGuestService, jest.Mock
   } as unknown as jest.Mocked<TaskGuestService>;
 }
 
-const ctx = { guestId: 'g1', taskId: 'task-1', projectId: 'project-1' };
+const ctx = { guestId: 'g1', taskId: 'task-1', projectId: 'project-1', companyId: 'company-1' };
 
 describe('TaskGuestPublicController', () => {
   // GET delega ao service com guestContext anexado pelo guard

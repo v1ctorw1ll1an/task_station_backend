@@ -9,6 +9,10 @@ import {
 import { MetricsController } from './metrics.controller';
 import { MetricsInterceptor } from './metrics.interceptor';
 import {
+  METRIC_BILLING_ALERTS_TOTAL,
+  METRIC_BILLING_LAST_WEBHOOK_AGE,
+  METRIC_BILLING_RECONCILE_TOTAL,
+  METRIC_BILLING_WEBHOOK_TOTAL,
   METRIC_HTTP_REQUESTS_TOTAL,
   METRIC_HTTP_REQUEST_DURATION,
   METRIC_WS_CONNECTIONS,
@@ -46,6 +50,25 @@ import {
       name: METRIC_WS_CONNECTIONS,
       help: 'Conexões WebSocket ativas por namespace.',
       labelNames: ['namespace'],
+    }),
+    makeCounterProvider({
+      name: METRIC_BILLING_WEBHOOK_TOTAL,
+      help: 'Eventos de webhook do Asaas por tipo e desfecho.',
+      labelNames: ['event', 'outcome'],
+    }),
+    makeCounterProvider({
+      name: METRIC_BILLING_RECONCILE_TOTAL,
+      help: 'Conciliações de cobrança que recuperaram estado direto no Asaas.',
+      labelNames: ['source'],
+    }),
+    makeCounterProvider({
+      name: METRIC_BILLING_ALERTS_TOTAL,
+      help: 'Alertas operacionais de cobrança disparados.',
+      labelNames: ['kind'],
+    }),
+    makeGaugeProvider({
+      name: METRIC_BILLING_LAST_WEBHOOK_AGE,
+      help: 'Segundos desde o último webhook do Asaas recebido.',
     }),
   ],
   exports: [MetricsService],

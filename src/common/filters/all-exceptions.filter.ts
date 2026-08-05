@@ -38,6 +38,17 @@ export class AllExceptionsFilter implements ExceptionFilter {
         ? (exception as Error).message
         : 'Internal server error';
 
+    // Código de erro estável (contrato com o frontend), quando a exceção o define
+    // no corpo — ex.: { code: 'COMPANY_BLOCKED' } do gate de cobrança. O `reason`
+    // acompanha porque é ele que diz ao front QUAL bloqueio é (vencido, limitado
+    // pela administração, suspenso) e, portanto, o que oferecer ao usuário.
+    const corpo =
+      isHttpException && typeof rawResponse === 'object' && rawResponse !== null
+        ? (rawResponse as { code?: string; reason?: string })
+        : undefined;
+    const code = corpo?.code;
+    const reason = corpo?.reason;
+
     const logContext = {
       statusCode,
       method: request.method,
@@ -61,6 +72,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
       {
         statusCode,
         message,
+        ...(code ? { code } : {}),
+        ...(reason ? { reason } : {}),
         timestamp: new Date().toISOString(),
         path: request.url,
       },

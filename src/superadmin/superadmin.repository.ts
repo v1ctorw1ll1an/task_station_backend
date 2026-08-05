@@ -1,5 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { MembershipRole, Prisma, ResourceType } from '../generated/prisma/client';
+import { addDays } from 'date-fns';
+import {
+  MembershipRole,
+  Prisma,
+  ResourceType,
+  SubscriptionStatus,
+} from '../generated/prisma/client';
+import { TRIAL_DAYS, TRIAL_SEATS } from '../billing/billing.constants';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -245,6 +252,15 @@ export class SuperadminRepository {
         },
       });
 
+      await tx.subscription.create({
+        data: {
+          companyId: company.id,
+          status: SubscriptionStatus.trial,
+          trialEndsAt: addDays(new Date(), TRIAL_DAYS),
+          purchasedSeats: TRIAL_SEATS,
+        },
+      });
+
       return company;
     });
   }
@@ -267,6 +283,15 @@ export class SuperadminRepository {
           resourceType: ResourceType.company,
           resourceId: company.id,
           role: MembershipRole.admin,
+        },
+      });
+
+      await tx.subscription.create({
+        data: {
+          companyId: company.id,
+          status: SubscriptionStatus.trial,
+          trialEndsAt: addDays(new Date(), TRIAL_DAYS),
+          purchasedSeats: TRIAL_SEATS,
         },
       });
 

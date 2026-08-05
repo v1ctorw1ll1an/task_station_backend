@@ -1,9 +1,10 @@
-import { Module } from '@nestjs/common';
+import { Module, RequestMethod } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, HttpAdapterHost } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { UserAwareThrottlerGuard } from './common/guards/user-throttler.guard';
+import { BillingGateGuard } from './billing/guards/billing-gate.guard';
 import { Logger, LoggerModule } from 'nestjs-pino';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
@@ -24,6 +25,8 @@ import { StickyNotesModule } from './sticky-notes/sticky-notes.module';
 import { EventoModule } from './evento/evento.module';
 import { TaskGuestModule } from './task-guest/task-guest.module';
 import { MaintenanceModule } from './maintenance/maintenance.module';
+import { BillingModule } from './billing/billing.module';
+import { ConviteModule } from './convite/convite.module';
 
 @Module({
   imports: [
@@ -39,6 +42,12 @@ import { MaintenanceModule } from './maintenance/maintenance.module';
         const level = config.get<string>('LOG_LEVEL', isDev ? 'debug' : 'info');
 
         return {
+          // O default do nestjs-pino ainda é `path: '*'`, sintaxe que o
+          // path-to-regexp do Express 5 não aceita — o Nest converte na mão e
+          // avisa duas vezes no boot (um aviso por middleware do logger).
+          // `{*path}` é exatamente o que a conversão produz, então o
+          // comportamento é o mesmo, sem o aviso.
+          forRoutes: [{ path: '{*path}', method: RequestMethod.ALL }],
           pinoHttp: {
             level,
             // Gera um requestId UUID para cada request — usado para correlação no Grafana
@@ -103,6 +112,8 @@ import { MaintenanceModule } from './maintenance/maintenance.module';
     EventoModule,
     TaskGuestModule,
     MaintenanceModule,
+    BillingModule,
+    ConviteModule,
   ],
   providers: [
     {
@@ -112,6 +123,12 @@ import { MaintenanceModule } from './maintenance/maintenance.module';
     {
       provide: APP_GUARD,
       useClass: UserAwareThrottlerGuard,
+    },
+    {
+      // Gate de escrita: bloqueia mutações de empresas em somente-leitura.
+      // Roda após o JwtAuthGuard (usuário já resolvido).
+      provide: APP_GUARD,
+      useClass: BillingGateGuard,
     },
     {
       provide: APP_FILTER,

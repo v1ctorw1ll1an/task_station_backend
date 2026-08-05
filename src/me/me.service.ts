@@ -10,6 +10,7 @@ import * as bcrypt from 'bcryptjs';
 import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import sharp from 'sharp';
+import { BillingAccessService } from '../billing/billing-access.service';
 import { MeRepository } from './me.repository';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdatePasswordDto } from './dto/update-password.dto';
@@ -35,6 +36,7 @@ const ALLOWED_MIME = new Set([
 export class MeService {
   constructor(
     private readonly repo: MeRepository,
+    private readonly billingAccess: BillingAccessService,
     @InjectPinoLogger(MeService.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -72,6 +74,16 @@ export class MeService {
     const updated = await this.repo.updateUserById(userId, dto);
     this.logger.info({ userId }, 'Profile updated');
     return updated;
+  }
+
+  /**
+   * Marca o tutorial de primeiros passos como visto. Idempotente de propósito: quem
+   * reabre o tour pelo menu e conclui de novo só reescreve a data, sem efeito colateral.
+   */
+  async markTutorialSeen(userId: string) {
+    const { tutorialSeenAt } = await this.repo.markTutorialSeen(userId);
+    this.logger.info({ userId }, 'Tutorial marked as seen');
+    return { tutorialSeenAt };
   }
 
   async updatePassword(userId: string, dto: UpdatePasswordDto) {
@@ -228,21 +240,37 @@ export class MeService {
 
     this.logger.info({ userId, count: companies.length }, 'User company list fetched');
 
-    return companies
-      .map((c) => {
-        const directAll = companyMemberships.filter((m) => m.resourceId === c.id);
-        const bestDirect = directAll.reduce<string | null>(
-          (best, m) => ((roleRank[m.role] ?? 0) > (roleRank[best ?? ''] ?? 0) ? m.role : best),
-          null,
-        );
-        // Prioridade: membership direto na empresa > role via workspace
-        const role = bestDirect ?? workspaceRoleByCompany.get(c.id) ?? 'member';
-        return { companyId: c.id, legalName: c.legalName, role };
-      })
-      .sort(
-        (a, b) =>
-          (roleRank[b.role] ?? 0) - (roleRank[a.role] ?? 0) ||
-          a.legalName.localeCompare(b.legalName),
+    const base = companies.map((c) => {
+      const directAll = companyMemberships.filter((m) => m.resourceId === c.id);
+      const bestDirect = directAll.reduce<string | null>(
+        (best, m) => ((roleRank[m.role] ?? 0) > (roleRank[best ?? ''] ?? 0) ? m.role : best),
+        null,
       );
+      // Prioridade: membership direto na empresa > role via workspace
+      const role = bestDirect ?? workspaceRoleByCompany.get(c.id) ?? 'member';
+      return { companyId: c.id, legalName: c.legalName, role };
+    });
+
+    // Resumo de cobrança por empresa (tela de paywall + CTA de assinar no front).
+    const withBilling = await Promise.all(
+      base.map(async (c) => {
+        const summary = await this.billingAccess.getSummary(c.companyId);
+        return {
+          ...c,
+          blocked: summary.blocked,
+          // `mode` é o que a UI usa para decidir entre app em consulta e porta fechada.
+          mode: summary.mode,
+          blockReason: summary.blockReason,
+          billingStatus: summary.status,
+          needsSubscription: summary.needsSubscription,
+          trialEndsAt: summary.trialEndsAt,
+        };
+      }),
+    );
+
+    return withBilling.sort(
+      (a, b) =>
+        (roleRank[b.role] ?? 0) - (roleRank[a.role] ?? 0) || a.legalName.localeCompare(b.legalName),
+    );
   }
 }

@@ -42,10 +42,21 @@ function makePrisma(
   } as unknown as PrismaService;
 }
 
-function makeService(prisma: PrismaService = makePrisma()) {
+function makeService(
+  prisma: PrismaService = makePrisma(),
+  access: { assertCanMutate: jest.Mock; assertCanDelete: jest.Mock } = {
+    assertCanMutate: jest.fn(),
+    assertCanDelete: jest.fn(),
+  },
+) {
   const gateway = makeGateway();
   const logger = makeLogger();
-  return { service: new TaskSessionService(prisma, gateway, logger as any), gateway, prisma };
+  return {
+    service: new TaskSessionService(prisma, gateway, access as any, logger as any),
+    gateway,
+    prisma,
+    access,
+  };
 }
 
 const TASK_FIXTURE = {
@@ -91,6 +102,21 @@ describe('TaskSessionService.start', () => {
     });
     const { service } = makeService(prisma);
     await expect(service.start('u-1', 't-x')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('ForbiddenException quando a empresa está bloqueada (paywall)', async () => {
+    const prisma = makePrisma({
+      task: { findFirst: jest.fn().mockResolvedValue(TASK_FIXTURE) },
+    });
+    const access = {
+      assertCanMutate: jest
+        .fn()
+        .mockRejectedValue(new ForbiddenException({ code: 'COMPANY_BLOCKED' })),
+      assertCanDelete: jest.fn(),
+    };
+    const { service } = makeService(prisma, access);
+    await expect(service.start('u-1', 't-1')).rejects.toBeInstanceOf(ForbiddenException);
+    expect(access.assertCanMutate).toHaveBeenCalledWith('c-1');
   });
 
   it('BadRequestException quando user já tem 3 sessões ativas', async () => {

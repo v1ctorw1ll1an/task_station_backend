@@ -18,8 +18,10 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthUser } from '../auth/strategies/jwt.strategy';
 import { CompanyAdminGuard } from './guards/company-admin.guard';
 import { EmpresaService } from './empresa.service';
+import { ConviteService } from '../convite/convite.service';
 import { ContratarMembroDto } from './dto/contratar-membro.dto';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
+import { CriarConviteDto } from './dto/criar-convite.dto';
 import { ListMembersQueryDto } from './dto/list-members-query.dto';
 import { ListWorkspacesQueryDto } from './dto/list-workspaces-query.dto';
 import { CompanyBroadcastDto } from '../notificacao/dto/broadcast.dto';
@@ -32,7 +34,10 @@ import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 @UseGuards(CompanyAdminGuard)
 @Controller('empresa/:companyId')
 export class EmpresaController {
-  constructor(private readonly empresaService: EmpresaService) {}
+  constructor(
+    private readonly empresaService: EmpresaService,
+    private readonly conviteService: ConviteService,
+  ) {}
 
   // ── Workspaces ────────────────────────────────────────────────────────────────
 
@@ -131,15 +136,62 @@ export class EmpresaController {
 
   @Post('membros/contratar')
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Contratar novo colaborador (cria conta + adiciona à empresa)' })
-  @ApiResponse({ status: 201, description: 'Colaborador criado e adicionado à empresa' })
-  @ApiResponse({ status: 409, description: 'Email já cadastrado no sistema' })
+  @ApiOperation({
+    summary:
+      'Adicionar colaborador: cria a conta e vincula, ou envia convite se o e-mail já tem conta',
+  })
+  @ApiResponse({
+    status: 201,
+    description:
+      '`mode: "hired"` (conta criada e vinculada) ou `mode: "invited"` (convite enviado)',
+  })
+  @ApiResponse({ status: 409, description: 'Esta pessoa já faz parte da empresa' })
   contratarMembro(
     @Param('companyId') companyId: string,
     @Body() dto: ContratarMembroDto,
     @CurrentUser() user: AuthUser,
   ) {
     return this.empresaService.contratarMembro(companyId, dto, user.id);
+  }
+
+  // ── Convites ──────────────────────────────────────────────────────────────────
+
+  @Post('convites')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Convidar (ou reenviar convite) por e-mail para entrar na empresa' })
+  @ApiResponse({ status: 201, description: 'Convite criado; link retornado para reenvio manual' })
+  @ApiResponse({ status: 409, description: 'Esta pessoa já faz parte da empresa' })
+  criarConvite(
+    @Param('companyId') companyId: string,
+    @Body() dto: CriarConviteDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.conviteService.criarConvite({
+      companyId,
+      email: dto.email,
+      role: dto.role,
+      invitedById: user.id,
+    });
+  }
+
+  @Get('convites')
+  @ApiOperation({ summary: 'Listar convites pendentes da empresa' })
+  @ApiResponse({ status: 200, description: 'Convites ainda não aceitos nem revogados' })
+  listarConvites(@Param('companyId') companyId: string) {
+    return this.conviteService.listarPendentes(companyId);
+  }
+
+  @Delete('convites/:inviteId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Revogar um convite pendente' })
+  @ApiResponse({ status: 204, description: 'Convite revogado' })
+  @ApiResponse({ status: 404, description: 'Convite não encontrado' })
+  async revogarConvite(
+    @Param('companyId') companyId: string,
+    @Param('inviteId') inviteId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    await this.conviteService.revogar(companyId, inviteId, user.id);
   }
 
   @Get('membros')

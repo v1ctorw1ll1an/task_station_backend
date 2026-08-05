@@ -21,7 +21,7 @@ import { CreateCompanyDto } from './dto/create-company.dto';
 import { ListCompaniesQueryDto } from './dto/list-companies-query.dto';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
 import { UpdateCompanyDto } from './dto/update-company.dto';
-import { UpdateProfileDto } from './dto/update-profile.dto';
+import { SuperadminUpdateProfileDto } from './dto/update-profile.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ToggleSuperuserDto } from './dto/toggle-superuser.dto';
 import { NotificacaoService } from '../notificacao/notificacao.service';
@@ -110,7 +110,7 @@ export class SuperadminController {
   @ApiOperation({ summary: 'Atualizar dados do próprio perfil (superusuário)' })
   @ApiResponse({ status: 200, description: 'Perfil atualizado' })
   @ApiResponse({ status: 409, description: 'Email já cadastrado' })
-  updateProfile(@Body() dto: UpdateProfileDto, @CurrentUser() user: AuthUser) {
+  updateProfile(@Body() dto: SuperadminUpdateProfileDto, @CurrentUser() user: AuthUser) {
     return this.superadminService.updateProfile(user.id, dto);
   }
 

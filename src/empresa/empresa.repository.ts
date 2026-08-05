@@ -342,9 +342,29 @@ export class EmpresaRepository {
         },
       });
 
-      if (params.memberIds.length > 0) {
+      // Quem cria entra como admin do próprio workspace. Sem isso o criador ficava de
+      // fora do que criou: não aparecia na lista de membros, não podia ser responsável
+      // por uma task e o workspace nem constava em `/me/workspaces`, que é movido só
+      // por membership. O papel acompanha o que já vale para o admin inicial em
+      // `createWorkspaceWithNewAdmin`. Só admin da empresa chega aqui (CompanyAdminGuard,
+      // que superusuário não fura), então não há risco de pendurar gente de fora.
+      await tx.membership.create({
+        data: {
+          userId: params.createdById,
+          resourceType: ResourceType.workspace,
+          resourceId: workspace.id,
+          role: MembershipRole.workspace_admin,
+        },
+      });
+
+      // `memberships` não tem unique de (userId, resourceType, resourceId) — o
+      // `skipDuplicates` abaixo não protegeria de nada. Se o criador também se marcou na
+      // lista, tirar daqui é o que evita a segunda linha, agora com papel menor.
+      const demais = params.memberIds.filter((userId) => userId !== params.createdById);
+
+      if (demais.length > 0) {
         await tx.membership.createMany({
-          data: params.memberIds.map((userId) => ({
+          data: demais.map((userId) => ({
             userId,
             resourceType: ResourceType.workspace,
             resourceId: workspace.id,

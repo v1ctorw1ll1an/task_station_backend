@@ -1,4 +1,9 @@
-import { BadRequestException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcryptjs';
@@ -45,6 +50,9 @@ function makeRepo(
   return {
     findActiveUserByEmail: jest.fn(),
     findActiveUserById: jest.fn(),
+    findCompanyByTaxId: jest.fn(),
+    registerCompanyWithOwner: jest.fn(),
+    createUserWithoutCompany: jest.fn(),
     updateUser: jest.fn(),
     invalidateTokensByType: jest.fn(),
     createPasswordResetToken: jest.fn(),
@@ -134,18 +142,227 @@ describe('AuthService.validateUser', () => {
 // ── login ──────────────────────────────────────────────────────────────────────
 
 describe('AuthService.login', () => {
-  it('retorna access_token e dados do usuário', () => {
+  const usuario = {
+    id: 'user-1',
+    email: 'test@example.com',
+    isSuperuser: false,
+    mustResetPassword: false,
+  };
+
+  it('retorna access_token e dados do usuário', async () => {
     const repo = makeRepo();
     const service = makeService(repo);
-    const result = service.login({
-      id: 'user-1',
-      email: 'test@example.com',
-      isSuperuser: false,
-      mustResetPassword: false,
-    });
+    const result = await service.login(usuario);
     expect(result.access_token).toBe('jwt-token');
     expect(result.user.id).toBe('user-1');
     expect(result.user.email).toBe('test@example.com');
+  });
+
+  it('abre uma sessão nova e a grava no usuário (um assento = um login)', async () => {
+    const repo = makeRepo();
+    const service = makeService(repo);
+    await service.login(usuario);
+
+    expect(repo.updateUser).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ activeSessionId: expect.any(String) }),
+    );
+  });
+
+  it('cada login gera uma sessão diferente — a anterior deixa de valer', async () => {
+    const repo = makeRepo();
+    const service = makeService(repo);
+    await service.login(usuario);
+    await service.login(usuario);
+
+    const [, primeiro] = repo.updateUser.mock.calls[0] as [string, { activeSessionId: string }];
+    const [, segundo] = repo.updateUser.mock.calls[1] as [string, { activeSessionId: string }];
+    expect(primeiro.activeSessionId).not.toBe(segundo.activeSessionId);
+  });
+
+  it('logout encerra a sessão única', async () => {
+    const repo = makeRepo();
+    const service = makeService(repo);
+    await service.logout('user-1');
+    expect(repo.updateUser).toHaveBeenCalledWith('user-1', { activeSessionId: null });
+  });
+});
+
+// ── register (auto-cadastro) ─────────────────────────────────────────────────────
+
+describe('AuthService.register', () => {
+  const dto = {
+    legalName: 'Acme Ltda',
+    taxId: '12.345.678/0001-99', // formatado — deve ser normalizado para dígitos
+    ownerName: '  João  ',
+    email: 'JOAO@acme.com',
+    phone: '(11) 98765-4321', // idem: máscara entra, só dígitos são gravados
+  };
+
+  it('lança NotFoundException quando PUBLIC_SIGNUP_ENABLED != true', async () => {
+    const repo = makeRepo();
+    const service = makeService(repo); // sem flag → desabilitado
+    await expect(service.register(dto)).rejects.toThrow(NotFoundException);
+    expect(repo.registerCompanyWithOwner).not.toHaveBeenCalled();
+  });
+
+  it('lança ConflictException quando o CNPJ já existe', async () => {
+    const repo = makeRepo({
+      findCompanyByTaxId: jest.fn().mockResolvedValue({ id: 'company-x' }),
+    });
+    const service = makeService(repo, { PUBLIC_SIGNUP_ENABLED: 'true' });
+    await expect(service.register(dto)).rejects.toThrow(ConflictException);
+    expect(repo.registerCompanyWithOwner).not.toHaveBeenCalled();
+  });
+
+  it('lança ConflictException quando o e-mail já é um usuário', async () => {
+    const repo = makeRepo({
+      findCompanyByTaxId: jest.fn().mockResolvedValue(null),
+      findActiveUserByEmail: jest.fn().mockResolvedValue(makeUser()),
+    });
+    const service = makeService(repo, { PUBLIC_SIGNUP_ENABLED: 'true' });
+    await expect(service.register(dto)).rejects.toThrow(ConflictException);
+    expect(repo.registerCompanyWithOwner).not.toHaveBeenCalled();
+  });
+
+  it('cria empresa+dono+trial, envia o magic link e retorna { ok: true }', async () => {
+    const repo = makeRepo({
+      findCompanyByTaxId: jest.fn().mockResolvedValue(null),
+      findActiveUserByEmail: jest.fn().mockResolvedValue(null),
+      registerCompanyWithOwner: jest.fn().mockResolvedValue({
+        company: { id: 'company-1' },
+        owner: { id: 'owner-1', name: 'João', email: 'joao@acme.com' },
+      }),
+      invalidateTokensByType: jest.fn().mockResolvedValue({ count: 0 }),
+      createPasswordResetToken: jest.fn().mockResolvedValue({}),
+    });
+    const mailerService = { sendFirstAccessEmail: jest.fn().mockResolvedValue(undefined) };
+    const service = makeService(repo, { PUBLIC_SIGNUP_ENABLED: 'true' });
+    (service as any).mailerService = mailerService;
+
+    const result = await service.register(dto);
+
+    expect(result).toEqual({ ok: true });
+    // e-mail normalizado (lowercase/trim) e nome trimado
+    expect(repo.registerCompanyWithOwner).toHaveBeenCalledWith(
+      { legalName: 'Acme Ltda', taxId: '12345678000199' },
+      expect.objectContaining({
+        name: 'João',
+        email: 'joao@acme.com',
+        phone: '11987654321',
+        mustResetPassword: true,
+        passwordHash: expect.any(String),
+      }),
+    );
+    // token first_access gerado para o dono
+    expect(repo.invalidateTokensByType).toHaveBeenCalledWith('owner-1', TokenType.first_access);
+    expect(mailerService.sendFirstAccessEmail).toHaveBeenCalledWith(
+      'joao@acme.com',
+      'João',
+      expect.stringContaining('/first-access?token='),
+    );
+  });
+
+  it('não vaza falha de e-mail — cadastro conclui mesmo se o envio falhar', async () => {
+    const repo = makeRepo({
+      findCompanyByTaxId: jest.fn().mockResolvedValue(null),
+      findActiveUserByEmail: jest.fn().mockResolvedValue(null),
+      registerCompanyWithOwner: jest.fn().mockResolvedValue({
+        company: { id: 'company-1' },
+        owner: { id: 'owner-1', name: 'João', email: 'joao@acme.com' },
+      }),
+      invalidateTokensByType: jest.fn().mockResolvedValue({ count: 0 }),
+      createPasswordResetToken: jest.fn().mockResolvedValue({}),
+    });
+    const mailerService = {
+      sendFirstAccessEmail: jest.fn().mockRejectedValue(new Error('smtp down')),
+    };
+    const service = makeService(repo, { PUBLIC_SIGNUP_ENABLED: 'true' });
+    (service as any).mailerService = mailerService;
+
+    await expect(service.register(dto)).resolves.toEqual({ ok: true });
+  });
+});
+
+// ── registerColaborador ────────────────────────────────────────────────────────
+
+describe('AuthService.registerColaborador', () => {
+  const dto = { name: '  Maria  ', email: 'MARIA@acme.com' };
+
+  it('lança NotFoundException quando PUBLIC_SIGNUP_ENABLED != true', async () => {
+    const repo = makeRepo();
+    const service = makeService(repo); // sem flag → desabilitado
+    await expect(service.registerColaborador(dto)).rejects.toThrow(NotFoundException);
+    expect(repo.createUserWithoutCompany).not.toHaveBeenCalled();
+  });
+
+  it('cria só o usuário — sem empresa, sem membership, sem trial', async () => {
+    const repo = makeRepo({
+      findActiveUserByEmail: jest.fn().mockResolvedValue(null),
+      createUserWithoutCompany: jest
+        .fn()
+        .mockResolvedValue({ id: 'user-9', name: 'Maria', email: 'maria@acme.com' }),
+      invalidateTokensByType: jest.fn().mockResolvedValue({ count: 0 }),
+      createPasswordResetToken: jest.fn().mockResolvedValue({}),
+    });
+    const mailerService = {
+      sendFirstAccessEmail: jest.fn().mockResolvedValue(undefined),
+      sendAccountAlreadyExistsEmail: jest.fn(),
+    };
+    const service = makeService(repo, { PUBLIC_SIGNUP_ENABLED: 'true' });
+    (service as any).mailerService = mailerService;
+
+    await expect(service.registerColaborador(dto)).resolves.toEqual({ ok: true });
+
+    // nome trimado, e-mail normalizado
+    expect(repo.createUserWithoutCompany).toHaveBeenCalledWith({
+      name: 'Maria',
+      email: 'maria@acme.com',
+      passwordHash: expect.any(String),
+    });
+    expect(repo.registerCompanyWithOwner).not.toHaveBeenCalled();
+    expect(repo.invalidateTokensByType).toHaveBeenCalledWith('user-9', TokenType.first_access);
+    expect(mailerService.sendFirstAccessEmail).toHaveBeenCalledWith(
+      'maria@acme.com',
+      'Maria',
+      expect.stringContaining('/first-access?token='),
+    );
+  });
+
+  it('e-mail já cadastrado: responde ok sem criar conta (não vira oráculo de enumeração)', async () => {
+    const repo = makeRepo({
+      findActiveUserByEmail: jest.fn().mockResolvedValue(makeUser()),
+      createUserWithoutCompany: jest.fn(),
+    });
+    const mailerService = {
+      sendFirstAccessEmail: jest.fn(),
+      sendAccountAlreadyExistsEmail: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = makeService(repo, { PUBLIC_SIGNUP_ENABLED: 'true' });
+    (service as any).mailerService = mailerService;
+
+    await expect(service.registerColaborador(dto)).resolves.toEqual({ ok: true });
+
+    expect(repo.createUserWithoutCompany).not.toHaveBeenCalled();
+    expect(mailerService.sendFirstAccessEmail).not.toHaveBeenCalled();
+    expect(mailerService.sendAccountAlreadyExistsEmail).toHaveBeenCalledWith('maria@acme.com');
+  });
+
+  it('conclui mesmo se o envio do e-mail falhar', async () => {
+    const repo = makeRepo({
+      findActiveUserByEmail: jest.fn().mockResolvedValue(null),
+      createUserWithoutCompany: jest
+        .fn()
+        .mockResolvedValue({ id: 'user-9', name: 'Maria', email: 'maria@acme.com' }),
+      invalidateTokensByType: jest.fn().mockResolvedValue({ count: 0 }),
+      createPasswordResetToken: jest.fn().mockResolvedValue({}),
+    });
+    const service = makeService(repo, { PUBLIC_SIGNUP_ENABLED: 'true' });
+    (service as any).mailerService = {
+      sendFirstAccessEmail: jest.fn().mockRejectedValue(new Error('smtp down')),
+    };
+
+    await expect(service.registerColaborador(dto)).resolves.toEqual({ ok: true });
   });
 });
 

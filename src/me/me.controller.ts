@@ -47,6 +47,14 @@ export class MeController {
     return this.meService.updateProfile(user.id, dto);
   }
 
+  @Post('tutorial/concluir')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Marcar o tutorial de primeiros passos como visto' })
+  @ApiResponse({ status: 200, description: 'Tutorial marcado como visto' })
+  markTutorialSeen(@CurrentUser() user: AuthUser) {
+    return this.meService.markTutorialSeen(user.id);
+  }
+
   @Post('perfil/foto')
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(
