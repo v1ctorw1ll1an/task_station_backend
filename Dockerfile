@@ -11,7 +11,11 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN pnpx prisma generate
+# `pnpm exec`, nunca `pnpx`: pnpx é alias de `pnpm dlx` e SEMPRE baixa a versão mais
+# recente do registry, ignorando o prisma pinado no lockfile. Quando o Prisma
+# publicou uma CLI sem o comando `generate`, o build quebrou sozinho, sem ninguém
+# ter tocado no projeto.
+RUN pnpm exec prisma generate
 RUN pnpm run build
 
 # Stage 3: production runner
@@ -33,4 +37,4 @@ COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
 EXPOSE 3000
 
 # Run migrations then start the app
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/main.js"]
+CMD ["sh", "-c", "pnpm exec prisma migrate deploy && node dist/src/main.js"]
