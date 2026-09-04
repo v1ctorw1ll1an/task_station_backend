@@ -32,6 +32,14 @@ const PERFIL_COMPLETO = {
   billingPhone: '11987654321',
 };
 
+/**
+ * Data relativa ao "agora". Fixture de ciclo aberto precisa ser relativa: uma data
+ * fixa no futuro vira passado com o tempo e quebra o teste sozinha.
+ */
+function emDias(n: number): Date {
+  return new Date(Date.now() + n * 24 * 60 * 60 * 1000);
+}
+
 function makeSub(overrides: Record<string, unknown> = {}): any {
   return {
     id: 'sub-uuid',
@@ -284,7 +292,7 @@ describe('BillingService', () => {
         status: 'active',
         method: 'annual_pix',
         asaasCustomerId: 'cus_1',
-        currentPeriodEnd: new Date('2027-01-10T00:00:00Z'),
+        currentPeriodEnd: new Date('2099-01-10T00:00:00Z'),
       });
       const { service, asaas } = makeService(sub);
       await service.subscribeMonthly('company-1', {});
@@ -292,7 +300,7 @@ describe('BillingService', () => {
       // A 1ª cobrança do plano novo cai no fim do que já foi pago — nada agora.
       expect(asaas.createCheckout).toHaveBeenCalledWith(
         expect.objectContaining({
-          subscription: expect.objectContaining({ nextDueDate: '2027-01-09' }),
+          subscription: expect.objectContaining({ nextDueDate: '2099-01-09' }),
         }),
       );
     });
@@ -577,8 +585,8 @@ describe('BillingService', () => {
         purchasedSeats: 2,
         asaasCustomerId: 'cus_1',
         asaasSubscriptionId: 'asub_1',
-        currentPeriodStart: new Date('2026-07-10T00:00:00Z'),
-        currentPeriodEnd: new Date('2026-08-10T00:00:00Z'),
+        currentPeriodStart: emDias(-20),
+        currentPeriodEnd: emDias(10),
         ...overrides,
       });
     }
@@ -589,8 +597,8 @@ describe('BillingService', () => {
         method: 'annual_pix',
         purchasedSeats: 2,
         asaasCustomerId: 'cus_1',
-        currentPeriodStart: new Date('2026-07-10T00:00:00Z'),
-        currentPeriodEnd: new Date('2027-07-10T00:00:00Z'),
+        currentPeriodStart: emDias(-60),
+        currentPeriodEnd: emDias(305),
         ...overrides,
       });
     }
@@ -828,7 +836,7 @@ describe('BillingService', () => {
         status: 'active',
         method: 'annual_pix',
         asaasSubscriptionId: null,
-        currentPeriodEnd: new Date('2027-01-10T00:00:00Z'),
+        currentPeriodEnd: emDias(120),
       });
       const { service, repo, asaas } = makeService(sub);
       await service.cancel('company-1');
@@ -1117,7 +1125,7 @@ describe('BillingService', () => {
         makeSub({
           status: 'active',
           method: 'annual_pix',
-          currentPeriodEnd: new Date('2027-01-01'),
+          currentPeriodEnd: emDias(120),
         }),
       );
       repo.findPendingChargesByCompany.mockResolvedValue([

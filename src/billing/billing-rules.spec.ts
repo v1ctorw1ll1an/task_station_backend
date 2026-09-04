@@ -42,6 +42,14 @@ const PERFIL = {
   billingPhone: '11987654321',
 };
 
+/**
+ * Data relativa ao "agora". Fixture de ciclo aberto precisa ser relativa: uma data
+ * fixa no futuro vira passado com o tempo e quebra o teste sozinha.
+ */
+function emDias(n: number): Date {
+  return new Date(Date.now() + n * 24 * 60 * 60 * 1000);
+}
+
 function makeSub(overrides: Record<string, unknown> = {}) {
   return {
     id: 'sub_1',
@@ -220,14 +228,14 @@ describe('Regras de cobrança (trava de regressão)', () => {
   describe('assento custa valor cheio, sempre', () => {
     it('mensal: o dia do mês não muda o preço', async () => {
       // Dois cenários idênticos, menos a data: mesma cobrança.
-      for (const dia of ['2026-07-11T00:00:00Z', '2026-08-09T00:00:00Z']) {
+      for (const inicio of [emDias(-29), emDias(-1)]) {
         jest.clearAllMocks();
         const sub = makeSub({
           status: 'active',
           method: 'monthly_card',
           asaasSubscriptionId: 'asub_1',
-          currentPeriodStart: new Date(dia),
-          currentPeriodEnd: new Date('2026-08-10T00:00:00Z'),
+          currentPeriodStart: inicio,
+          currentPeriodEnd: emDias(1),
         });
         const { service, repo } = makeBilling(sub);
 
@@ -243,7 +251,7 @@ describe('Regras de cobrança (trava de regressão)', () => {
       const sub = makeSub({
         status: 'active',
         method: 'annual_pix',
-        currentPeriodEnd: new Date('2027-07-10T00:00:00Z'),
+        currentPeriodEnd: emDias(305),
       });
       const { service, repo, asaas } = makeBilling(sub);
 
@@ -263,7 +271,7 @@ describe('Regras de cobrança (trava de regressão)', () => {
         status: 'active',
         method: 'monthly_card',
         asaasSubscriptionId: 'asub_1',
-        currentPeriodEnd: new Date('2026-08-10T00:00:00Z'),
+        currentPeriodEnd: emDias(10),
       });
       const { service, repo } = makeBilling(sub);
 
@@ -571,7 +579,7 @@ describe('Regras de cobrança (trava de regressão)', () => {
       const sub = makeSub({
         status: 'active',
         method: 'annual_pix',
-        currentPeriodEnd: new Date('2027-01-10T00:00:00Z'),
+        currentPeriodEnd: emDias(120),
       });
       const { service, repo } = makeBilling(sub);
 
@@ -592,7 +600,7 @@ describe('Regras de cobrança (trava de regressão)', () => {
         status: 'active',
         method: 'annual_pix',
         addonSeats: 2,
-        currentPeriodEnd: new Date('2027-01-10T00:00:00Z'),
+        currentPeriodEnd: emDias(120),
       });
       const { service, repo, asaas } = makeBilling(sub);
       repo.findSeatAddons.mockResolvedValue([
