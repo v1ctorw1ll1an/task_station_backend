@@ -178,6 +178,48 @@ describe('Billing (e2e)', () => {
       expect(count).toBe(1);
     });
 
+    /**
+     * A conta Asaas é compartilhada com outros produtos e o Asaas manda TODOS os eventos
+     * dela para TODAS as URLs cadastradas. O teste unitário do parser não pega o erro de
+     * confundir "não dá para descartar" com "é nosso" — só este pega, com a rota inteira
+     * de pé e o banco de verdade atrás.
+     */
+    it('evento de outro produto → 200 e NADA gravado no inbox', async () => {
+      asaasMock.getPayment.mockClear();
+      await request(app.getHttpServer())
+        .post('/api/v1/billing/webhook')
+        .set('asaas-access-token', WEBHOOK_TOKEN)
+        .send({
+          id: 'e2e-alheio',
+          event: 'PAYMENT_RECEIVED',
+          payment: {
+            id: 'pay_de_outro',
+            customer: 'cus_de_outro',
+            subscription: 'sub_de_outro',
+            externalReference: 'outro:99',
+            description: 'Assinatura Outro App',
+            value: 10,
+            status: 'RECEIVED',
+          },
+        })
+        .expect(200)
+        .expect({ received: true, result: 'foreign' });
+
+      const row = await prisma.webhookEvent.findUnique({ where: { asaasEventId: 'e2e-alheio' } });
+      expect(row).toBeNull();
+      // Nem um GET no provedor: a recusa custa uma comparação de string.
+      expect(asaasMock.getPayment).not.toHaveBeenCalled();
+    });
+
+    it('token certo COM ESPAÇO NO FIM → 200 (o copiar-e-colar não derruba a fila)', async () => {
+      asaasMock.getPayment.mockResolvedValue({ id: 'pay_x', status: 'PENDING' });
+      await request(app.getHttpServer())
+        .post('/api/v1/billing/webhook')
+        .set('asaas-access-token', `${WEBHOOK_TOKEN} `)
+        .send({ id: 'e2e-evt-trim', event: 'PAYMENT_RECEIVED', payment: { id: 'pay_x' } })
+        .expect(200);
+    });
+
     // B1: falha de PROCESSAMENTO não pode "encerrar" o evento — ele fica na fila
     // local com nova tentativa agendada, e o Asaas recebe 200 (já está gravado).
     it('falha ao processar → 200, evento em `failed` com retentativa agendada', async () => {

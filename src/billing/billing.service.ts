@@ -17,6 +17,7 @@ import type {
 } from '../generated/prisma/client';
 import { MailerService } from '../mailer/mailer.service';
 import { AsaasClient } from './asaas/asaas.client';
+import { externalReference, resolveGroupName } from './asaas/asaas-identity';
 import type { AsaasPayment, CreatePaymentInput } from './asaas/asaas.types';
 import { toCsv } from './billing-export';
 import { normalizeTaxId } from '../common/tax-id';
@@ -592,7 +593,7 @@ export class BillingService {
           value: this.reais(amountCents),
           cycle: 'YEARLY',
           nextDueDate: formatInTimeZone(inicio, TZ, 'yyyy-MM-dd'),
-          externalReference: sub.id,
+          externalReference: externalReference(sub.id),
           description: `TaskDY — assinatura anual (${seats} usuário(s))`,
         });
       } catch (err: unknown) {
@@ -882,7 +883,7 @@ export class BillingService {
         value: annualSeatValueReais(quantity),
         cycle: 'YEARLY',
         nextDueDate: this.today(),
-        externalReference: addon.id,
+        externalReference: externalReference(addon.id),
         description: descricao,
       });
       await this.repo.updateSeatAddon(addon.id, { asaasSubscriptionId: asaasSub.id });
@@ -1308,7 +1309,7 @@ export class BillingService {
       billingType: 'PIX',
       value: this.reais(amountCents),
       dueDate: this.today(),
-      externalReference: charge.id,
+      externalReference: externalReference(charge.id),
       description,
     });
     const qr = await this.asaas.getPixQrCode(payment.id);
@@ -1800,14 +1801,18 @@ export class BillingService {
 
   /**
    * Garante o cliente no Asaas, já com o endereço completo — é ele que a página de
-   * checkout exibe. Um cliente por empresa (`externalReference: companyId`): é essa
-   * unicidade que permite reencontrar depois a assinatura e o pagamento que o checkout
-   * criar.
+   * checkout exibe. Um cliente por empresa (`externalReference: taskdy:<companyId>`): é
+   * essa unicidade que permite reencontrar depois a assinatura e o pagamento que o
+   * checkout criar.
+   *
+   * O `groupName` vai nos dois caminhos de propósito: é pelo `updateCustomer` que o
+   * cliente criado antes deste namespace entra no grupo, sem script de backfill.
    */
   private async ensureCustomer(sub: Subscription, companyId: string): Promise<string> {
     const fiscal = await this.repo.getCompanyFiscal(companyId);
     if (!fiscal) throw new NotFoundException('Empresa não encontrada');
     const endereco = this.enderecoDoCadastro(sub);
+    const grupo = this.grupoDeClientes();
 
     if (sub.asaasCustomerId) {
       // Best-effort: o perfil pode ter mudado desde a criação, e o checkout mostra o
@@ -1816,6 +1821,8 @@ export class BillingService {
         await this.asaas.updateCustomer(sub.asaasCustomerId, {
           name: fiscal.legalName,
           cpfCnpj: fiscal.taxId,
+          externalReference: externalReference(companyId),
+          ...(grupo ? { groupName: grupo } : {}),
           ...endereco,
         });
       } catch (err: unknown) {
@@ -1831,11 +1838,17 @@ export class BillingService {
       name: fiscal.legalName,
       cpfCnpj: fiscal.taxId,
       email: endereco.email ?? fiscal.adminEmail,
-      externalReference: companyId,
+      externalReference: externalReference(companyId),
+      ...(grupo ? { groupName: grupo } : {}),
       ...endereco,
     });
     await this.repo.updateSubscription(sub.id, { asaasCustomerId: customer.id });
     return customer.id;
+  }
+
+  /** Grupo do painel do Asaas. Só afeta o painel — nunca a resolução de eventos. */
+  private grupoDeClientes(): string | undefined {
+    return resolveGroupName(this.config.get<string>('ASAAS_CUSTOMER_GROUP'));
   }
 
   /** Endereço já guardado, no formato do Asaas. Campos vazios simplesmente não vão. */

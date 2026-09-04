@@ -22,6 +22,16 @@ export interface CreateCustomerInput {
   city?: string;
   postalCode?: string;
   externalReference?: string;
+  /**
+   * Grupo de clientes no painel — separa os nossos clientes dos outros produtos que
+   * faturam na MESMA conta Asaas (ver `asaas-identity.ts`).
+   *
+   * Existe **só no cliente** (`POST /v3/customers`, `PUT /v3/customers/{id}`): não há
+   * campo equivalente em assinatura nem em cobrança, e **nenhum GET devolve o grupo** —
+   * `GET /v3/customers/{id}` não traz o campo e `GET /v3/customers` só aceita filtrar
+   * por ele. Por isso o grupo nunca serve para identificar o dono de um evento.
+   */
+  groupName?: string;
 }
 
 export interface AsaasCustomer {

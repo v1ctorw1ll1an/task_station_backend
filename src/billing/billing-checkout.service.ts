@@ -5,6 +5,7 @@ import { addMinutes, subDays } from 'date-fns';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import type { BillingCharge, Subscription } from '../generated/prisma/client';
 import { AsaasClient } from './asaas/asaas.client';
+import { externalReference, parseExternalReference } from './asaas/asaas-identity';
 import type {
   AsaasChargeType,
   AsaasCycle,
@@ -168,8 +169,13 @@ export class BillingCheckoutService {
       (s) => !jaUsadas.has(s.id) && String(s.status).toUpperCase() === 'ACTIVE',
     );
 
-    // 1. O caminho limpo: o Asaas propagou a nossa referência.
-    const porReferencia = livres.filter((s) => s.externalReference === charge.id);
+    // 1. O caminho limpo: o Asaas propagou a nossa referência. Compara pelo id extraído
+    //    para aceitar tanto `taskdy:<id>` quanto o `<id>` cru das assinaturas criadas
+    //    antes do namespace — a lista já vem escopada pelo NOSSO cliente, então o id
+    //    basta. Referência de outro produto sai com `id: null` e nunca casa.
+    const porReferencia = livres.filter(
+      (s) => parseExternalReference(s.externalReference).id === charge.id,
+    );
     if (porReferencia.length === 1) return porReferencia[0].id;
 
     // 2. Sem referência, exige ciclo E valor batendo — e um candidato só.
@@ -205,12 +211,14 @@ export class BillingCheckoutService {
   async casarPagamento(charge: BillingCharge, sub: Subscription): Promise<AsaasPayment | null> {
     if (!sub.asaasCustomerId) return null;
 
-    // 1. Referência explícita — se o Asaas a propagou, acabou aqui.
-    const porRef = await this.buscar({
-      customer: sub.asaasCustomerId,
-      externalReference: charge.id,
-    });
-    if (porRef.length === 1) return porRef[0];
+    // 1. Referência explícita — se o Asaas a propagou, acabou aqui. O filtro da API bate
+    //    string exata, então a cobrança criada antes do namespace só aparece pelo id cru:
+    //    tenta a namespeada e cai no legado. As duas passam pelo mesmo critério de
+    //    "exatamente um candidato".
+    for (const ref of [externalReference(charge.id), charge.id]) {
+      const porRef = await this.buscar({ customer: sub.asaasCustomerId, externalReference: ref });
+      if (porRef.length === 1) return porRef[0];
+    }
 
     // 2. Cobranças da assinatura, quando já sabemos qual é.
     const assinatura = charge.seatAddonId
@@ -268,13 +276,13 @@ export class BillingCheckoutService {
           quantity: 1,
           value: this.reais(opts.amountCents),
           description: this.corta(opts.descricao, CHECKOUT_ITEM_DESCRIPTION_MAX),
-          externalReference: charge.id,
+          externalReference: externalReference(charge.id),
         },
       ],
       // Sempre o id do cliente, nunca `customerData`: a API recusa os dois juntos, e é
       // pelo cliente que reencontramos o que o checkout gerar.
       customer: customerId,
-      externalReference: charge.id,
+      externalReference: externalReference(charge.id),
     };
 
     if (chargeType === 'RECURRENT') {

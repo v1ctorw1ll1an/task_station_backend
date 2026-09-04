@@ -16,6 +16,8 @@ export type WebhookOutcome =
   | 'duplicate'
   | 'persist_failed'
   | 'invalid'
+  /** Evento de outro produto na mesma conta Asaas — recusado antes do inbox. */
+  | 'foreign'
   | 'processed'
   | 'ignored'
   | 'retry'

@@ -12,6 +12,7 @@ import { Prisma } from '../generated/prisma/client';
 import { MailerService } from '../mailer/mailer.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { AsaasClient } from './asaas/asaas.client';
+import { parseExternalReference } from './asaas/asaas-identity';
 import type { AsaasCheckout, AsaasPayment, AsaasWebhookPayload } from './asaas/asaas.types';
 import { BillingAccessService } from './billing-access.service';
 import { BillingAlertsService } from './billing-alerts.service';
@@ -36,10 +37,9 @@ const RETRY_BACKOFF_MINUTES = [1, 5, 15, 60, 360, 1440];
 const MAX_ATTEMPTS = RETRY_BACKOFF_MINUTES.length + 1;
 /** Se o processo morrer no meio, o evento fica `received`; o cron o retoma após isso. */
 const STUCK_AFTER_MINUTES = 5;
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Desfecho da **gravação** do evento — decide o status HTTP devolvido ao Asaas. */
-export type WebhookIngestResult = 'ok' | 'duplicate' | 'invalid' | 'persist_failed';
+export type WebhookIngestResult = 'ok' | 'duplicate' | 'invalid' | 'foreign' | 'persist_failed';
 
 /** Origem de uma conciliação (rótulo de métrica). */
 export type ReconcileSource = 'status' | 'cron_charge' | 'cron_subscription';
@@ -55,6 +55,8 @@ export type ReconcileSource = 'status' | 'cron_charge' | 'cron_subscription';
  *   `nextAttemptAt` e o cron reprocessa com backoff; esgotado, vira `dead` + alerta.
  * - **Idempotência:** unique em `asaasEventId` + `markChargePaid` condicional.
  * - Nunca confia no payload: re-busca o pagamento no Asaas.
+ * - **Isolamento multi-produto:** a conta Asaas é compartilhada, e evento com namespace
+ *   de outro produto é recusado ANTES do inbox (ver `asaas-identity.ts`).
  */
 @Injectable()
 export class BillingWebhookService {
@@ -83,6 +85,24 @@ export class BillingWebhookService {
       this.logger.warn({ payload }, 'Webhook malformado (sem id/event) — ignorado');
       this.metrics.billingWebhook(event ?? 'unknown', 'invalid');
       return 'invalid';
+    }
+
+    // A conta Asaas é compartilhada com outros produtos e o Asaas manda TODOS os eventos
+    // dela para TODAS as URLs cadastradas. Recusar o alheio é a primeira coisa: custa uma
+    // comparação de string e evita gravar no inbox, gastar um GET /payments e alertar
+    // `payment_unmatched` para um pagamento que nunca foi nosso.
+    //
+    // Só `isForeign` recusa. Evento SEM referência segue o fluxo: o checkout hospedado
+    // não garante propagar o `externalReference` para a cobrança que gera — é para esse
+    // caso que a cadeia `chargeDoCheckoutAberto` existe.
+    const ref = parseExternalReference(
+      payload.payment?.externalReference ?? payload.checkout?.externalReference,
+    );
+    if (ref.isForeign) {
+      // Nunca logar a payload: ela carrega dado de cliente de outro sistema.
+      this.logger.info({ eventId, event }, 'Evento de outro produto na conta Asaas — ignorado');
+      this.metrics.billingWebhook(event, 'foreign');
+      return 'foreign';
     }
 
     let record: { id: string };
@@ -447,9 +467,9 @@ export class BillingWebhookService {
     const byPaymentId = await this.repo.findChargeByAsaasPaymentId(payment.id);
     if (byPaymentId) return byPaymentId;
 
-    const ref = payment.externalReference;
-    if (ref && UUID_RE.test(ref)) {
-      const byRef = await this.repo.findChargeById(ref);
+    const { id } = parseExternalReference(payment.externalReference);
+    if (id) {
+      const byRef = await this.repo.findChargeById(id);
       if (byRef) return this.religar(byRef, payment, 'externalReference');
     }
 
@@ -505,13 +525,13 @@ export class BillingWebhookService {
       const addon = await this.repo.findSeatAddonByAsaasSubscription(payment.subscription);
       if (addon) return this.repo.findSubscriptionById(addon.subscriptionId);
     }
-    const ref = payment.externalReference;
-    if (ref && UUID_RE.test(ref)) {
-      // `createSubscription` usa `externalReference = subscription.id` (plano) ou
-      // `= seatAddon.id` (assentos anuais).
-      const byRef = await this.repo.findSubscriptionById(ref);
+    const { id } = parseExternalReference(payment.externalReference);
+    if (id) {
+      // `createSubscription` usa `externalReference = taskdy:<subscription.id>` (plano)
+      // ou `taskdy:<seatAddon.id>` (assentos anuais).
+      const byRef = await this.repo.findSubscriptionById(id);
       if (byRef) return byRef;
-      const addon = await this.repo.findSeatAddonById(ref);
+      const addon = await this.repo.findSeatAddonById(id);
       if (addon) return this.repo.findSubscriptionById(addon.subscriptionId);
     }
     return null;
@@ -769,8 +789,8 @@ export class BillingWebhookService {
       const bySub = await this.repo.findSeatAddonByAsaasSubscription(payment.subscription);
       if (bySub) return bySub;
     }
-    const ref = payment.externalReference;
-    if (ref && UUID_RE.test(ref)) return this.repo.findSeatAddonById(ref);
+    const { id } = parseExternalReference(payment.externalReference);
+    if (id) return this.repo.findSeatAddonById(id);
     return null;
   }
 

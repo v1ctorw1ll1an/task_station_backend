@@ -12,6 +12,7 @@ import { ConfigService } from '@nestjs/config';
 import { ApiExcludeEndpoint } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
 import { createHash, timingSafeEqual } from 'crypto';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Public } from '../auth/decorators/public.decorator';
 import type { AsaasWebhookPayload } from './asaas/asaas.types';
 import { BillingWebhookService } from './billing-webhook.service';
@@ -22,6 +23,11 @@ function secretsMatch(received: string, expected: string): boolean {
   const a = createHash('sha256').update(received).digest();
   const b = createHash('sha256').update(expected).digest();
   return timingSafeEqual(a, b);
+}
+
+/** O bastante para comparar dois tokens num log — nunca o segredo inteiro. */
+function prefixo(secret: string | undefined): string | null {
+  return secret ? secret.slice(0, 6) : null;
 }
 
 /**
@@ -45,6 +51,8 @@ export class BillingWebhookController {
   constructor(
     private readonly config: ConfigService,
     private readonly webhookService: BillingWebhookService,
+    @InjectPinoLogger(BillingWebhookController.name)
+    private readonly logger: PinoLogger,
   ) {}
 
   @Post()
@@ -54,11 +62,30 @@ export class BillingWebhookController {
     @Headers('asaas-access-token') token: string | undefined,
     @Body() payload: AsaasWebhookPayload,
   ) {
-    const expected = this.config.get<string>('ASAAS_WEBHOOK_TOKEN');
+    // Aparar os dois lados não é firula: o token vai para arquivo de config no
+    // copiar-e-colar, e um espaço invisível no fim derruba a comparação.
+    const expected = this.config.get<string>('ASAAS_WEBHOOK_TOKEN')?.trim();
     if (!expected) {
       throw new ServiceUnavailableException('Webhook não configurado');
     }
-    if (!token || !secretsMatch(token, expected)) {
+    const received = token?.trim();
+    if (!received || !secretsMatch(received, expected)) {
+      // Sem este log, um 401 não distingue token errado, header ausente e token
+      // truncado — e a explicação do painel do Asaas culpa firewall, que é palpite
+      // genérico. Prefixo e tamanho bastam: nunca o token inteiro, nunca a payload.
+      //   header ausente ................ cadastro sem `authToken` no painel
+      //   prefixos diferentes ........... config errada, ou outro webhook na mesma URL
+      //   mesmo prefixo, tamanho diferente  token truncado ao copiar
+      this.logger.warn(
+        {
+          headerPresente: token != null,
+          recebido: prefixo(received),
+          recebidoLen: received?.length ?? 0,
+          esperado: prefixo(expected),
+          esperadoLen: expected.length,
+        },
+        'Token de webhook recusado',
+      );
       throw new UnauthorizedException('Token de webhook inválido');
     }
 

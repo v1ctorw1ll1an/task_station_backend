@@ -1,5 +1,6 @@
 import { ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { PinoLogger } from 'nestjs-pino';
 import type { AsaasWebhookPayload } from './asaas/asaas.types';
 import { BillingWebhookController } from './billing-webhook.controller';
 import { BillingWebhookService, WebhookIngestResult } from './billing-webhook.service';
@@ -12,7 +13,13 @@ function make(result: WebhookIngestResult = 'ok', configuredToken: string | null
   const service = {
     handle: jest.fn().mockResolvedValue(result),
   } as unknown as jest.Mocked<BillingWebhookService>;
-  return { controller: new BillingWebhookController(config, service), service };
+  const logger = {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    debug: jest.fn(),
+  } as unknown as jest.Mocked<PinoLogger>;
+  return { controller: new BillingWebhookController(config, service, logger), service, logger };
 }
 
 const payload = {
@@ -58,6 +65,53 @@ describe('BillingWebhookController', () => {
     await expect(controller.handle(TOKEN + 'sobra', payload)).rejects.toBeInstanceOf(
       UnauthorizedException,
     );
+  });
+
+  /**
+   * O token vai para arquivo de config no copiar-e-colar, e um espaço invisível no fim
+   * derrubava a comparação — 401 em todo evento, fila do Asaas interrompida em 15
+   * falhas, eventos represados apagados em 14 dias. Aparamos os DOIS lados.
+   */
+  it('token certo com espaço no fim → 200 (os dois lados são aparados)', async () => {
+    const { controller, service } = make();
+    await expect(controller.handle(`${TOKEN}  `, payload)).resolves.toMatchObject({
+      received: true,
+    });
+    expect(service.handle).toHaveBeenCalled();
+  });
+
+  it('config com espaço no fim também casa', async () => {
+    const { controller } = make('ok', `${TOKEN}   `);
+    await expect(controller.handle(TOKEN, payload)).resolves.toMatchObject({ received: true });
+  });
+
+  /**
+   * Sem este log, um 401 não distingue token errado, header ausente e token truncado —
+   * e a explicação do painel do Asaas culpa firewall. Com ele a causa aparece na
+   * primeira tentativa. Prefixo e tamanho bastam: o token inteiro nunca vai para o log.
+   */
+  it('token recusado loga prefixo e tamanho dos dois lados, nunca o token inteiro', async () => {
+    const { controller, logger } = make();
+    await expect(controller.handle('outro-token-qualquer', payload)).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+    const [contexto] = logger.warn.mock.calls[0] as [Record<string, unknown>, string];
+    expect(contexto).toMatchObject({
+      headerPresente: true,
+      recebido: 'outro-',
+      recebidoLen: 'outro-token-qualquer'.length,
+      esperado: TOKEN.slice(0, 6),
+      esperadoLen: TOKEN.length,
+    });
+    expect(JSON.stringify(contexto)).not.toContain(TOKEN);
+  });
+
+  it('header ausente aparece como tal no log — é cadastro sem authToken no painel', async () => {
+    const { controller, logger } = make();
+    await expect(controller.handle(undefined, payload)).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+    expect(logger.warn.mock.calls[0][0]).toMatchObject({ headerPresente: false, recebidoLen: 0 });
   });
 
   it('token certo e evento gravado → 200', async () => {

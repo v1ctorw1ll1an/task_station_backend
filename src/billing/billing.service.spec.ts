@@ -210,7 +210,12 @@ describe('BillingService', () => {
       const r = await service.subscribeMonthly('company-1', {});
 
       expect(asaas.createCustomer).toHaveBeenCalledWith(
-        expect.objectContaining({ cpfCnpj: '12345678000199', externalReference: 'company-1' }),
+        // Namespace + grupo: a conta Asaas é compartilhada com outros produtos.
+        expect.objectContaining({
+          cpfCnpj: '12345678000199',
+          externalReference: 'taskdy:company-1',
+          groupName: 'taskdy',
+        }),
       );
       expect(asaas.createCheckout).toHaveBeenCalledWith(
         expect.objectContaining({

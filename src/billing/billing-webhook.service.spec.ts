@@ -294,6 +294,140 @@ describe('BillingWebhookService', () => {
     expect(repo.markChargePaid).toHaveBeenCalledWith(CHARGE_UUID);
   });
 
+  it('religa o pagamento à cobrança pelo externalReference COM namespace', async () => {
+    // O gêmeo do teste acima para os registros criados depois do namespace. O de cima
+    // fica como regressão: a Asaas guarda o `externalReference` para sempre, então a
+    // grafia antiga volta em toda renovação de assinatura já criada.
+    const repo = makeRepo({
+      findChargeById: jest.fn().mockResolvedValue({
+        id: CHARGE_UUID,
+        subscriptionId: 'sub_1',
+        companyId: 'c1',
+        type: 'subscription',
+        asaasPaymentId: null,
+        invoiceUrl: null,
+      }),
+      findSubscriptionById: jest
+        .fn()
+        .mockResolvedValue({ id: 'sub_1', method: 'annual_pix', superadminLocked: false }),
+    });
+    const fresh = {
+      id: 'pay_1',
+      status: 'RECEIVED',
+      value: 430.92,
+      externalReference: `taskdy:${CHARGE_UUID}`,
+    };
+    const service = makeService(repo, makeAsaas(fresh));
+
+    await service.handle({
+      id: 'evt_1',
+      event: 'PAYMENT_RECEIVED',
+      payment: { id: 'pay_1', externalReference: `taskdy:${CHARGE_UUID}` } as never,
+    });
+
+    // O id vem do parse, não de um slice na mão: procurar por `taskdy:<uuid>` no banco
+    // não acharia nada e o pagamento cairia em `payment_unmatched` — em silêncio, e
+    // justamente para os registros NOVOS.
+    expect(repo.findChargeById).toHaveBeenCalledWith(CHARGE_UUID);
+    expect(repo.markChargePaid).toHaveBeenCalledWith(CHARGE_UUID);
+  });
+
+  // ── Isolamento multi-produto ───────────────────────────────────────────────
+  //
+  // O Asaas manda TODOS os eventos da conta para TODAS as URLs cadastradas. Recusar o
+  // alheio é obrigação nossa, e tem que custar uma comparação de string: sem isso cada
+  // evento de outro produto grava no inbox, gasta um GET /payments e alerta a operação.
+
+  describe('evento de outro produto na mesma conta Asaas', () => {
+    it('é recusado antes do inbox e antes de qualquer consulta ao Asaas', async () => {
+      const repo = makeRepo();
+      const asaas = makeAsaas({ id: 'pay_alheio', status: 'RECEIVED', value: 10 });
+      const service = makeService(repo, asaas);
+
+      const result = await service.handle({
+        id: 'evt_alheio',
+        event: 'PAYMENT_RECEIVED',
+        payment: {
+          id: 'pay_alheio',
+          customer: 'cus_de_outro',
+          externalReference: 'outro:99',
+          value: 10,
+          status: 'RECEIVED',
+        } as never,
+      });
+
+      expect(result).toBe('foreign');
+      expect(repo.createWebhookEvent).not.toHaveBeenCalled();
+      expect(asaas.getPayment).not.toHaveBeenCalled();
+      expect(alerts.raise).not.toHaveBeenCalled();
+      expect(metrics.billingWebhook).toHaveBeenCalledWith('PAYMENT_RECEIVED', 'foreign');
+    });
+
+    it('vale também para os eventos de checkout', async () => {
+      const repo = makeRepo();
+      const service = makeService(repo, makeAsaas(null));
+
+      const result = await service.handle({
+        id: 'evt_chk_alheio',
+        event: 'CHECKOUT_PAID',
+        checkout: { id: 'chk_1', status: 'PAID', externalReference: 'outro:abc' } as never,
+      });
+
+      expect(result).toBe('foreign');
+      expect(repo.createWebhookEvent).not.toHaveBeenCalled();
+      expect(repo.findChargeByCheckoutId).not.toHaveBeenCalled();
+    });
+
+    it('não loga a payload — ela carrega dado de cliente de outro sistema', async () => {
+      const service = makeService(makeRepo(), makeAsaas(null));
+      await service.handle({
+        id: 'evt_alheio',
+        event: 'PAYMENT_RECEIVED',
+        payment: { id: 'p', externalReference: 'outro:99', description: 'Outro App' } as never,
+      });
+      expect(JSON.stringify((logger.info as jest.Mock).mock.calls)).not.toContain('Outro App');
+    });
+
+    it('evento SEM externalReference NÃO é recusado — o checkout pode não propagá-lo', async () => {
+      // `!isForeign` significa "não dá para descartar", não "é nosso". Quem confirma o
+      // dono é a consulta ao nosso banco, logo adiante na cadeia.
+      const repo = makeRepo();
+      const asaas = makeAsaas({ id: 'pay_1', status: 'PENDING', value: 10 });
+      const service = makeService(repo, asaas);
+
+      const result = await service.handle({
+        id: 'evt_sem_ref',
+        event: 'PAYMENT_RECEIVED',
+        payment: { id: 'pay_1' } as never,
+      });
+
+      expect(result).toBe('ok');
+      expect(repo.createWebhookEvent).toHaveBeenCalled();
+      expect(asaas.getPayment).toHaveBeenCalledWith('pay_1');
+    });
+
+    it('UUID de outro produto passa o filtro mas morre na consulta ao nosso banco', async () => {
+      // A linha do meio da tabela: o id serve para procurar, o dono NÃO está
+      // confirmado. `findChargeById` devolve null porque esse UUID não é nosso.
+      const repo = makeRepo();
+      const alheio = '99999999-8888-7777-6666-555555555555';
+      const service = makeService(
+        repo,
+        makeAsaas({ id: 'pay_1', status: 'RECEIVED', value: 10, externalReference: alheio }),
+      );
+
+      await service.handle({
+        id: 'evt_uuid_alheio',
+        event: 'PAYMENT_RECEIVED',
+        payment: { id: 'pay_1', externalReference: alheio } as never,
+      });
+
+      expect(repo.findChargeById).toHaveBeenCalledWith(alheio);
+      expect(repo.markChargePaid).not.toHaveBeenCalled();
+      expect(alerts.raise).toHaveBeenCalledWith('payment_unmatched', expect.anything());
+    });
+  });
+
   it('alerta quando o pagamento confirmado não casa com nenhuma cobrança', async () => {
     const repo = makeRepo();
     const service = makeService(repo, makeAsaas({ id: 'pay_x', status: 'RECEIVED', value: 10 }));

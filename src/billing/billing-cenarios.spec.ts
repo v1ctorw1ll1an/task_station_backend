@@ -139,9 +139,9 @@ class FakeDb {
   notices = new Set<string>();
 
   /**
-   * Ids no formato UUID. Importa: o webhook só aceita `externalReference` que **pareça**
-   * um id nosso (`UUID_RE`), então ids fake fora do formato esconderiam o caminho de
-   * resolução que roda em produção.
+   * Ids no formato UUID. Importa: o webhook só extrai `externalReference` que **pareça**
+   * um id nosso (`parseExternalReference`, em `asaas/asaas-identity.ts`), então ids fake
+   * fora do formato esconderiam o caminho de resolução que roda em produção.
    */
   id(prefix: string): string {
     this.seq += 1;
