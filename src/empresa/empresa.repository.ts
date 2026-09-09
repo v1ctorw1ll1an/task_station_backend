@@ -345,9 +345,8 @@ export class EmpresaRepository {
       // Quem cria entra como admin do próprio workspace. Sem isso o criador ficava de
       // fora do que criou: não aparecia na lista de membros, não podia ser responsável
       // por uma task e o workspace nem constava em `/me/workspaces`, que é movido só
-      // por membership. O papel acompanha o que já vale para o admin inicial em
-      // `createWorkspaceWithNewAdmin`. Só admin da empresa chega aqui (CompanyAdminGuard,
-      // que superusuário não fura), então não há risco de pendurar gente de fora.
+      // por membership. Só admin da empresa chega aqui (CompanyAdminGuard, que
+      // superusuário não fura), então não há risco de pendurar gente de fora.
       await tx.membership.create({
         data: {
           userId: params.createdById,
@@ -373,103 +372,6 @@ export class EmpresaRepository {
           skipDuplicates: true,
         });
       }
-
-      return workspace;
-    });
-  }
-
-  createWorkspaceWithNewAdmin(params: {
-    workspaceName: string;
-    workspaceDescription?: string;
-    companyId: string;
-    createdById: string;
-    adminEmail: string;
-    adminName: string;
-    adminPasswordHash: string;
-  }) {
-    return this.prisma.$transaction(async (tx) => {
-      const workspace = await tx.workspace.create({
-        data: {
-          name: params.workspaceName,
-          description: params.workspaceDescription,
-          companyId: params.companyId,
-          createdById: params.createdById,
-        },
-        select: {
-          id: true,
-          name: true,
-          description: true,
-          isActive: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-      });
-
-      const admin = await tx.user.create({
-        data: {
-          name: params.adminName,
-          email: params.adminEmail,
-          passwordHash: params.adminPasswordHash,
-          mustResetPassword: true,
-        },
-        select: { id: true, name: true, email: true },
-      });
-
-      await tx.membership.create({
-        data: {
-          userId: admin.id,
-          resourceType: ResourceType.company,
-          resourceId: params.companyId,
-          role: MembershipRole.member,
-        },
-      });
-
-      await tx.membership.create({
-        data: {
-          userId: admin.id,
-          resourceType: ResourceType.workspace,
-          resourceId: workspace.id,
-          role: MembershipRole.workspace_admin,
-        },
-      });
-
-      return { workspace, admin };
-    });
-  }
-
-  createWorkspaceWithExistingAdmin(params: {
-    workspaceName: string;
-    workspaceDescription?: string;
-    companyId: string;
-    createdById: string;
-    adminUserId: string;
-  }) {
-    return this.prisma.$transaction(async (tx) => {
-      const workspace = await tx.workspace.create({
-        data: {
-          name: params.workspaceName,
-          description: params.workspaceDescription,
-          companyId: params.companyId,
-          createdById: params.createdById,
-        },
-        select: {
-          id: true,
-          name: true,
-          description: true,
-          isActive: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-      });
-
-      await tx.membership.create({
-        data: {
-          userId: params.adminUserId,
-          resourceType: ResourceType.workspace,
-          resourceId: workspace.id,
-          role: MembershipRole.workspace_admin,
-        },
-      });
 
       return workspace;
     });

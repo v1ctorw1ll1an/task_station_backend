@@ -13,6 +13,7 @@ import type {
   BillingCharge,
   BillingMethod,
   ChargeType,
+  MembershipRole,
   Subscription,
 } from '../generated/prisma/client';
 import { MailerService } from '../mailer/mailer.service';
@@ -785,6 +786,46 @@ export class BillingService {
         sub.status === 'trial'
           ? `O teste inclui ${total} usuário(s), todos em uso. Assine um plano para adicionar mais pessoas.`
           : `Todos os ${total} usuário(s) contratados estão em uso. Contrate mais usuários para adicionar membros.`,
+    });
+  }
+
+  /**
+   * Serializa por empresa uma admissão que não cabe em `ensureCompanySeat` — os casos
+   * em que ocupar o assento e criar o resto (o usuário, o consumo do convite) precisa
+   * ser um passo só. Sem isto, `assertSeatAvailable` é read-then-write e dois pedidos
+   * simultâneos com um assento livre passam os dois.
+   *
+   * Mantenha só a seção crítica aqui dentro: o lock é de transação, e segurar uma
+   * transação Postgres enquanto se manda e-mail é o jeito de transformar lentidão do
+   * Resend em contenção de banco.
+   */
+  withSeatLock<T>(companyId: string, fn: () => Promise<T>): Promise<T> {
+    return this.repo.withCompanyLock(companyId, fn);
+  }
+
+  /**
+   * Porta única para alguém passar a ocupar um assento da empresa. Quem já é membro
+   * não consome assento novo — a chamada é no-op —, então promover, mudar de papel ou
+   * entrar num segundo workspace nunca esbarra no limite. Só a entrada de gente nova
+   * passa por `assertSeatAvailable`.
+   *
+   * Existe porque a checagem estava só na porta de "contratar/convidar": os fluxos de
+   * workspace criavam o vínculo de empresa direto, e adicionar alguém a um workspace
+   * era um jeito de ocupar assento sem passar por cobrança.
+   *
+   * Serializa por empresa: `assertSeatAvailable` é read-then-write e, sem exclusão
+   * mútua, dois pedidos simultâneos com um assento livre criam dois vínculos.
+   */
+  async ensureCompanySeat(
+    companyId: string,
+    userId: string,
+    role: MembershipRole = 'member',
+  ): Promise<void> {
+    await this.repo.withCompanyLock(companyId, async () => {
+      if (await this.repo.findCompanyMembership(companyId, userId)) return;
+      await this.assertSeatAvailable(companyId);
+      await this.repo.createCompanyMembership(companyId, userId, role);
+      this.logger.info({ companyId, userId, role }, 'Assento ocupado');
     });
   }
 

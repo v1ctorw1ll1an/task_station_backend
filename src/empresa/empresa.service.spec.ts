@@ -84,8 +84,6 @@ function makeRepo(
     updateMembershipSelect: jest.fn(),
     updateManyMemberships: jest.fn(),
     createWorkspaceWithMembers: jest.fn(),
-    createWorkspaceWithNewAdmin: jest.fn(),
-    createWorkspaceWithExistingAdmin: jest.fn(),
     createUserWithCompanyMembership: jest.fn(),
     findProjectsByWorkspace: jest.fn().mockResolvedValue([]),
     ...overrides,
@@ -117,7 +115,12 @@ function makeService(repo: jest.Mocked<EmpresaRepository>) {
   } as unknown as ConfigService;
   const logger = makeLogger();
   const notificacaoService = { notifyUsers: jest.fn(), sendBroadcast: jest.fn() } as any;
-  const billingService = { assertSeatAvailable: jest.fn().mockResolvedValue(undefined) } as any;
+  const billingService = {
+    assertSeatAvailable: jest.fn().mockResolvedValue(undefined),
+    ensureCompanySeat: jest.fn().mockResolvedValue(undefined),
+    // O lock é exclusão mútua no Postgres; no unit test executa a seção direto.
+    withSeatLock: jest.fn((_companyId: string, fn: () => Promise<unknown>) => fn()),
+  } as any;
   const conviteService = {
     criarConvite: jest.fn().mockResolvedValue({
       inviteId: 'invite-1',
@@ -710,9 +713,9 @@ describe('EmpresaService.promoteToWorkspaceAdmin', () => {
     );
   });
 
-  it('cria membership na empresa como member quando usuário não tem vínculo direto com a empresa', async () => {
-    const ws = makeWorkspace();
+  it('delega ao billing a entrada na empresa (é lá que o assento é cobrado)', async () => {
     // Usuário tem membership em outro workspace mas não na empresa diretamente
+    const ws = makeWorkspace();
     const workspaceMembership = makeMembership({
       userId: 'user-2',
       resourceType: ResourceType.workspace,
@@ -724,22 +727,47 @@ describe('EmpresaService.promoteToWorkspaceAdmin', () => {
         .fn()
         .mockResolvedValueOnce(null) // assertNotCompanyAdmin
         .mockResolvedValueOnce(workspaceMembership) // anyMembership → é membro via workspace
-        .mockResolvedValueOnce(null) // sem membership no ws-1
-        .mockResolvedValueOnce(null), // sem membership direta na empresa
+        .mockResolvedValueOnce(null), // sem membership no ws-1
       findWorkspaceById: jest.fn().mockResolvedValue(ws),
       findCompanyWorkspaceIds: jest.fn().mockResolvedValue([{ id: 'ws-1' }, { id: 'ws-other' }]),
-      createMembership: jest.fn().mockResolvedValue({}),
       createMembershipSelect: jest.fn().mockResolvedValue({}),
     });
-    const { service } = makeService(repo);
+    const { service, billingService } = makeService(repo);
     await service.promoteToWorkspaceAdmin('company-1', 'ws-1', 'user-2', 'user-1');
-    expect(repo.createMembership).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: 'user-2',
-        resourceType: ResourceType.company,
-        role: MembershipRole.member,
-      }),
+    expect(billingService.ensureCompanySeat).toHaveBeenCalledWith('company-1', 'user-2');
+  });
+
+  /**
+   * Regressão: promover alguém a workspace_admin criava o vínculo de empresa direto,
+   * sem passar por cobrança — era um jeito de ocupar assento com o plano lotado.
+   */
+  it('sem assento livre: propaga o erro e não cria o vínculo de workspace', async () => {
+    const ws = makeWorkspace();
+    const workspaceMembership = makeMembership({
+      userId: 'user-2',
+      resourceType: ResourceType.workspace,
+      resourceId: 'ws-other',
+      role: MembershipRole.workspace_admin,
+    });
+    const repo = makeRepo({
+      findMembership: jest
+        .fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(workspaceMembership)
+        .mockResolvedValueOnce(null),
+      findWorkspaceById: jest.fn().mockResolvedValue(ws),
+      findCompanyWorkspaceIds: jest.fn().mockResolvedValue([{ id: 'ws-1' }, { id: 'ws-other' }]),
+      createMembershipSelect: jest.fn().mockResolvedValue({}),
+    });
+    const { service, billingService } = makeService(repo);
+    billingService.ensureCompanySeat.mockRejectedValue(
+      new BadRequestException({ code: 'SEAT_LIMIT', message: 'sem assento' }),
     );
+
+    await expect(
+      service.promoteToWorkspaceAdmin('company-1', 'ws-1', 'user-2', 'user-1'),
+    ).rejects.toThrow(BadRequestException);
+    expect(repo.createMembershipSelect).not.toHaveBeenCalled();
   });
 });
 
@@ -882,5 +910,102 @@ describe('EmpresaService.contratarMembro', () => {
     await expect(service.contratarMembro('company-1', dto, 'admin-1')).rejects.toThrow(
       ConflictException,
     );
+  });
+});
+
+// ── Portas de workspace que ocupam assento ─────────────────────────────────────
+
+/**
+ * Regressão: estes fluxos criavam o vínculo de EMPRESA direto ("ensure company
+ * membership"), sem passar por cobrança. Com o plano lotado, adicionar alguém a um
+ * workspace era um jeito de ocupar assento de graça. Agora toda entrada na empresa
+ * passa por `ensureCompanySeat`.
+ */
+describe('EmpresaService — entrada na empresa pelos fluxos de workspace', () => {
+  describe('addWorkspaceMember', () => {
+    it('delega ao billing a entrada na empresa', async () => {
+      const repo = makeRepo({
+        findWorkspaceById: jest.fn().mockResolvedValue(makeWorkspace()),
+        findMembership: jest.fn().mockResolvedValue(null),
+        createMembershipSelect: jest.fn().mockResolvedValue({}),
+      });
+      const { service, billingService } = makeService(repo);
+
+      await service.addWorkspaceMember('company-1', 'ws-1', 'user-2', 'user-1');
+
+      expect(billingService.ensureCompanySeat).toHaveBeenCalledWith('company-1', 'user-2');
+    });
+
+    it('sem assento livre: propaga o erro e não cria o vínculo de workspace', async () => {
+      const repo = makeRepo({
+        findWorkspaceById: jest.fn().mockResolvedValue(makeWorkspace()),
+        findMembership: jest.fn().mockResolvedValue(null),
+        createMembershipSelect: jest.fn().mockResolvedValue({}),
+      });
+      const { service, billingService } = makeService(repo);
+      billingService.ensureCompanySeat.mockRejectedValue(
+        new BadRequestException({ code: 'SEAT_LIMIT', message: 'sem assento' }),
+      );
+
+      await expect(
+        service.addWorkspaceMember('company-1', 'ws-1', 'user-2', 'user-1'),
+      ).rejects.toThrow(BadRequestException);
+      expect(repo.createMembershipSelect).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('setWorkspaceMemberRole', () => {
+    it('delega ao billing a entrada na empresa ao criar o vínculo', async () => {
+      const repo = makeRepo({
+        findWorkspaceById: jest.fn().mockResolvedValue(makeWorkspace()),
+        // assertNotCompanyAdmin → null; membership no workspace → null
+        findMembership: jest.fn().mockResolvedValue(null),
+        createMembershipSelect: jest.fn().mockResolvedValue({}),
+      });
+      const { service, billingService } = makeService(repo);
+
+      await service.setWorkspaceMemberRole('company-1', 'ws-1', 'user-2', 'member', 'user-1');
+
+      expect(billingService.ensureCompanySeat).toHaveBeenCalledWith('company-1', 'user-2');
+    });
+
+    it('sem assento livre: propaga o erro e não cria o vínculo de workspace', async () => {
+      const repo = makeRepo({
+        findWorkspaceById: jest.fn().mockResolvedValue(makeWorkspace()),
+        findMembership: jest.fn().mockResolvedValue(null),
+        createMembershipSelect: jest.fn().mockResolvedValue({}),
+      });
+      const { service, billingService } = makeService(repo);
+      billingService.ensureCompanySeat.mockRejectedValue(
+        new BadRequestException({ code: 'SEAT_LIMIT', message: 'sem assento' }),
+      );
+
+      await expect(
+        service.setWorkspaceMemberRole('company-1', 'ws-1', 'user-2', 'member', 'user-1'),
+      ).rejects.toThrow(BadRequestException);
+      expect(repo.createMembershipSelect).not.toHaveBeenCalled();
+    });
+
+    it('quem já tem vínculo no workspace só troca de papel — não ocupa assento novo', async () => {
+      const repo = makeRepo({
+        findWorkspaceById: jest.fn().mockResolvedValue(makeWorkspace()),
+        findMembership: jest
+          .fn()
+          .mockResolvedValueOnce(null) // assertNotCompanyAdmin
+          .mockResolvedValueOnce(makeMembership({ role: MembershipRole.member })),
+        updateMembershipSelect: jest.fn().mockResolvedValue({}),
+      });
+      const { service, billingService } = makeService(repo);
+
+      await service.setWorkspaceMemberRole(
+        'company-1',
+        'ws-1',
+        'user-2',
+        'workspace_admin',
+        'user-1',
+      );
+
+      expect(billingService.ensureCompanySeat).not.toHaveBeenCalled();
+    });
   });
 });

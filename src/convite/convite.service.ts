@@ -209,14 +209,18 @@ export class ConviteService {
     }
 
     // Checagem definitiva de assento: o admin pode ter enchido os assentos entre o
-    // convite e o clique.
-    await this.billingService.assertSeatAvailable(invite.companyId);
-
-    const accepted = await this.repo.accept({
-      inviteId: invite.id,
-      companyId: invite.companyId,
-      userId: user.id,
-      role: invite.role,
+    // convite e o clique. Travado por empresa junto com o aceite — convite pendente
+    // não reserva assento, então dois convidados clicando ao mesmo tempo com um
+    // assento livre passariam os dois se a checagem não fosse serializada com a
+    // criação do vínculo.
+    const accepted = await this.billingService.withSeatLock(invite.companyId, async () => {
+      await this.billingService.assertSeatAvailable(invite.companyId);
+      return this.repo.accept({
+        inviteId: invite.id,
+        companyId: invite.companyId,
+        userId: user.id,
+        role: invite.role,
+      });
     });
 
     if (!accepted) {

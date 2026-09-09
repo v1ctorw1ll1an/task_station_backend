@@ -63,6 +63,8 @@ function makeRepo(sub: any): jest.Mocked<BillingRepository> {
     findSubscriptionByCompany: jest.fn().mockResolvedValue(sub),
     updateSubscription: jest.fn().mockResolvedValue(sub),
     countOccupiedSeats: jest.fn().mockResolvedValue(1),
+    findCompanyMembership: jest.fn().mockResolvedValue(null),
+    createCompanyMembership: jest.fn().mockResolvedValue({ id: 'membership-1' }),
     findCompanySeatHolders: jest
       .fn()
       .mockResolvedValue([{ userId: 'dono', role: 'admin', scheduledRemovalAt: null }]),
@@ -460,6 +462,76 @@ describe('BillingService', () => {
       const savedCharge = repo.createCharge.mock.calls[0][0];
       expect(savedCharge).not.toHaveProperty('cardLastFour');
       expect(savedCharge).not.toHaveProperty('cardBrand');
+    });
+  });
+
+  describe('ensureCompanySeat', () => {
+    it('quem já é membro não ocupa assento novo (nem consulta o limite)', async () => {
+      const { service, repo } = makeService(makeSub({ status: 'active', purchasedSeats: 1 }));
+      repo.countOccupiedSeats.mockResolvedValue(1); // lotado
+      repo.findCompanyMembership.mockResolvedValue({ id: 'membership-existente' } as never);
+
+      // Não pode lançar: promover ou mudar de papel quem já está dentro não é entrada
+      // nova, e barrar isso travaria a empresa lotada na própria administração.
+      await expect(service.ensureCompanySeat('company-1', 'user-2')).resolves.toBeUndefined();
+      expect(repo.createCompanyMembership).not.toHaveBeenCalled();
+    });
+
+    it('entrada nova com assento livre: cria o vínculo como member', async () => {
+      const { service, repo } = makeService(makeSub({ status: 'active', purchasedSeats: 3 }));
+      repo.countOccupiedSeats.mockResolvedValue(1);
+
+      await service.ensureCompanySeat('company-1', 'user-2');
+
+      expect(repo.createCompanyMembership).toHaveBeenCalledWith('company-1', 'user-2', 'member');
+    });
+
+    it('entrada nova sem assento: SEAT_LIMIT e nada é criado', async () => {
+      const { service, repo } = makeService(makeSub({ status: 'active', purchasedSeats: 2 }));
+      repo.countOccupiedSeats.mockResolvedValue(2);
+
+      await expect(service.ensureCompanySeat('company-1', 'user-2')).rejects.toMatchObject({
+        response: { code: 'SEAT_LIMIT' },
+      });
+      expect(repo.createCompanyMembership).not.toHaveBeenCalled();
+    });
+
+    /**
+     * O motivo de a seção ser travada: `assertSeatAvailable` conta e só depois grava.
+     * Sem exclusão mútua, dois pedidos simultâneos leem o mesmo "1 livre" e gravam os
+     * dois — a empresa passa a ter mais gente dentro do que assentos pagos.
+     */
+    it('duas entradas simultâneas com um assento livre: só uma passa', async () => {
+      const { service, repo } = makeService(makeSub({ status: 'active', purchasedSeats: 2 }));
+
+      // O advisory lock do Postgres serializa; aqui a fila faz o mesmo, e a contagem
+      // acompanha as gravações já feitas — é o que torna a corrida observável.
+      let fila: Promise<unknown> = Promise.resolve();
+      (repo.withCompanyLock as jest.Mock).mockImplementation(
+        (_c: string, fn: () => Promise<unknown>) => {
+          const proximo = fila.then(fn, fn);
+          fila = proximo.then(
+            () => undefined,
+            () => undefined,
+          );
+          return proximo;
+        },
+      );
+      let ocupados = 1;
+      (repo.countOccupiedSeats as jest.Mock).mockImplementation(() => Promise.resolve(ocupados));
+      (repo.createCompanyMembership as jest.Mock).mockImplementation(() => {
+        ocupados += 1;
+        return Promise.resolve({ id: `membership-${ocupados}` });
+      });
+
+      const resultados = await Promise.allSettled([
+        service.ensureCompanySeat('company-1', 'user-2'),
+        service.ensureCompanySeat('company-1', 'user-3'),
+      ]);
+
+      expect(resultados.map((r) => r.status)).toEqual(['fulfilled', 'rejected']);
+      expect(repo.createCompanyMembership).toHaveBeenCalledTimes(1);
+      expect(ocupados).toBe(2);
     });
   });
 

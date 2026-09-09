@@ -64,6 +64,8 @@ function makeService(
   };
   const billingService = {
     assertSeatAvailable: deps.assertSeatAvailable ?? jest.fn().mockResolvedValue(undefined),
+    // O lock é exclusão mútua no Postgres; no unit test executa a seção direto.
+    withSeatLock: jest.fn((_companyId: string, fn: () => Promise<unknown>) => fn()),
   };
   const billingAccess = {
     getSummary: deps.getSummary ?? jest.fn().mockResolvedValue({ mode: 'ok' }),

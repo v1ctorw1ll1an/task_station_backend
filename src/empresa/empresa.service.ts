@@ -176,9 +176,9 @@ export class EmpresaService {
    * e a resposta não devolve dado nenhum do usuário além do e-mail que o admin digitou.
    */
   async contratarMembro(companyId: string, dto: ContratarMembroDto, performedById: string) {
-    // Assento comprado é a unidade cobrada: bloqueia se todos já estão ocupados.
-    await this.billingService.assertSeatAvailable(companyId);
-
+    // Assento comprado é a unidade cobrada: bloqueia se todos já estão ocupados. Cada
+    // caminho faz a sua checagem — `criarConvite` no `invited`, a seção travada abaixo
+    // no `hired` —, porque só a segunda pode criar o vínculo junto e fechar a corrida.
     const email = dto.email.trim().toLowerCase();
     const existing = await this.repo.findUserByEmail(email);
 
@@ -203,13 +203,17 @@ export class EmpresaService {
       };
     }
 
+    // O bcrypt fica fora do lock: é ~100 ms de CPU que não precisa segurar a transação.
     const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
-    const user = await this.repo.createUserWithCompanyMembership({
-      name: dto.name,
-      email,
-      phone: dto.phone,
-      passwordHash: placeholderHash,
-      companyId,
+    const user = await this.billingService.withSeatLock(companyId, async () => {
+      await this.billingService.assertSeatAvailable(companyId);
+      return this.repo.createUserWithCompanyMembership({
+        name: dto.name,
+        email,
+        phone: dto.phone,
+        passwordHash: placeholderHash,
+        companyId,
+      });
     });
 
     const frontendUrl = this.configService.getOrThrow<string>('FRONTEND_URL');
@@ -634,21 +638,10 @@ export class EmpresaService {
       return updated;
     }
 
-    // Ensure company membership
-    const companyMembership = await this.repo.findMembership({
-      userId,
-      resourceType: ResourceType.company,
-      resourceId: companyId,
-      deletedAt: null,
-    });
-    if (!companyMembership) {
-      await this.repo.createMembership({
-        userId,
-        resourceType: ResourceType.company,
-        resourceId: companyId,
-        role: MembershipRole.member,
-      });
-    }
+    // Antes de criar o vínculo de workspace: entrar na empresa ocupa assento, e o
+    // limite tem que barrar aqui também. Se estourar, nada é criado — vínculo de
+    // workspace para quem não entrou na empresa ficaria órfão.
+    await this.billingService.ensureCompanySeat(companyId, userId);
 
     const membership = await this.repo.createMembershipSelect({
       userId,
@@ -799,28 +792,15 @@ export class EmpresaService {
     });
     if (existing) throw new ConflictException('Usuário já é membro deste workspace');
 
+    // Entrar na empresa ocupa assento — o limite barra antes de qualquer escrita.
+    await this.billingService.ensureCompanySeat(companyId, userId);
+
     const membership = await this.repo.createMembershipSelect({
       userId,
       resourceType: ResourceType.workspace,
       resourceId: workspaceId,
       role: MembershipRole.member,
     });
-
-    // Ensure company membership exists
-    const companyMembership = await this.repo.findMembership({
-      userId,
-      resourceType: ResourceType.company,
-      resourceId: companyId,
-      deletedAt: null,
-    });
-    if (!companyMembership) {
-      await this.repo.createMembership({
-        userId,
-        resourceType: ResourceType.company,
-        resourceId: companyId,
-        role: MembershipRole.member,
-      });
-    }
 
     this.logger.info(
       { companyId, workspaceId, userId, performedById },
@@ -908,20 +888,8 @@ export class EmpresaService {
       return updated;
     }
 
-    const companyMembership = await this.repo.findMembership({
-      userId,
-      resourceType: ResourceType.company,
-      resourceId: companyId,
-      deletedAt: null,
-    });
-    if (!companyMembership) {
-      await this.repo.createMembership({
-        userId,
-        resourceType: ResourceType.company,
-        resourceId: companyId,
-        role: MembershipRole.member,
-      });
-    }
+    // Entrar na empresa ocupa assento — o limite barra antes de qualquer escrita.
+    await this.billingService.ensureCompanySeat(companyId, userId);
 
     const membership = await this.repo.createMembershipSelect({
       userId,

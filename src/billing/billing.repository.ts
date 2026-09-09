@@ -2,6 +2,7 @@ import { ConflictException, Injectable } from '@nestjs/common';
 import {
   ChargeStatus,
   ChargeType,
+  MembershipRole,
   Prisma,
   SeatAddonStatus,
   SubscriptionStatus,
@@ -52,6 +53,21 @@ export class BillingRepository {
   countOccupiedSeats(companyId: string) {
     return this.prisma.membership.count({
       where: { resourceType: 'company', resourceId: companyId, deletedAt: null },
+    });
+  }
+
+  /** Vínculo ativo de empresa — quem já tem um não ocupa assento novo. */
+  findCompanyMembership(companyId: string, userId: string) {
+    return this.prisma.membership.findFirst({
+      where: { userId, resourceType: 'company', resourceId: companyId, deletedAt: null },
+      select: { id: true },
+    });
+  }
+
+  /** Ocupa um assento. Só `BillingService.ensureCompanySeat` deve chamar. */
+  createCompanyMembership(companyId: string, userId: string, role: MembershipRole) {
+    return this.prisma.membership.create({
+      data: { userId, resourceType: 'company', resourceId: companyId, role },
     });
   }
 

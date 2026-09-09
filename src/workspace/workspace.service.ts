@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { MembershipRole, Prisma, ResourceType } from '../generated/prisma/client';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
+import { BillingService } from '../billing/billing.service';
 import { WorkspaceRepository } from './workspace.repository';
 import { AddWorkspaceMemberDto } from './dto/add-workspace-member.dto';
 import { CreateProjectDto } from './dto/create-project.dto';
@@ -20,6 +21,7 @@ import { UpdateProjectDto } from './dto/update-project.dto';
 export class WorkspaceService {
   constructor(
     private readonly repo: WorkspaceRepository,
+    private readonly billingService: BillingService,
     @InjectPinoLogger(WorkspaceService.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -271,29 +273,17 @@ export class WorkspaceService {
       throw new ConflictException('Usuário já é membro deste workspace');
     }
 
+    // Entrar na empresa-pai ocupa assento — o limite barra antes de qualquer escrita.
+    // Se estourar, nada é criado: vínculo de workspace para quem não entrou na
+    // empresa ficaria órfão.
+    await this.billingService.ensureCompanySeat(workspace.companyId, userId);
+
     const membership = await this.repo.createMembershipSelect({
       userId,
       resourceType: ResourceType.workspace,
       resourceId: workspaceId,
       role: MembershipRole.member,
     });
-
-    // Garante membership na empresa-pai
-    const companyMembership = await this.repo.findMembership({
-      userId,
-      resourceType: ResourceType.company,
-      resourceId: workspace.companyId,
-      deletedAt: null,
-    });
-
-    if (!companyMembership) {
-      await this.repo.createMembership({
-        userId,
-        resourceType: ResourceType.company,
-        resourceId: workspace.companyId,
-        role: MembershipRole.member,
-      });
-    }
 
     this.logger.info({ workspaceId, userId, performedById }, 'Member added to workspace');
 
