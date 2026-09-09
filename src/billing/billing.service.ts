@@ -6,7 +6,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { addYears, subHours } from 'date-fns';
+import { addMonths, addYears, subHours } from 'date-fns';
 import { formatInTimeZone } from 'date-fns-tz';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import type {
@@ -27,20 +27,19 @@ import { BillingWebhookService } from './billing-webhook.service';
 import { BillingPreviewQueryDto, PreviewMethod } from './dto/billing-preview-query.dto';
 import { ListChargesQueryDto } from './dto/list-charges-query.dto';
 import { SubscribeAnnualCardDto } from './dto/subscribe-annual-card.dto';
+import { SeatsChoiceDto } from './dto/seats-choice.dto';
 import { SubscribeAnnualPixDto } from './dto/subscribe-annual-pix.dto';
+import { SubscribeMonthlyPixDto } from './dto/subscribe-monthly-pix.dto';
 import { SubscribeMonthlyDto } from './dto/subscribe-monthly.dto';
+import { cycleOf, isAnnual, isCard, isMonthly } from './billing-method';
 import {
   ANNUAL_DISCOUNT,
   ANNUAL_SEAT_CENTS,
-  annualCardTotalCents,
   annualSeatChargeCents,
   annualSeatValueReais,
   annualTotalCents,
-  DEFAULT_ANNUAL_INTEREST_MONTHLY,
   entitledSeats,
-  installmentPreview,
   MAX_SEATS,
-  maxAnnualInstallments,
   MONTHLY_BASE_CENTS,
   MONTHLY_EXTRA_SEAT_CENTS,
   monthlySeatChargeCents,
@@ -153,7 +152,7 @@ export class BillingService {
        * para reajustar. A tela usa isto para esconder as opções em vez de deixar o
        * cliente descobrir pelo 400.
        */
-      canChangeSeats: sub.method === 'monthly_card',
+      canChangeSeats: isMonthly(sub.method),
       prices: {
         monthlyCents: monthlyTotalCents(sub.purchasedSeats),
         annualCents: annualTotalCents(sub.purchasedSeats),
@@ -298,7 +297,7 @@ export class BillingService {
     // No mensal a cobrança da renovação nasce no Asaas e só vira `BillingCharge`
     // quando processada — sem isto, "Já paguei" não enxergaria a mensalidade que
     // acabou de ser paga no cartão.
-    if (sub.method === 'monthly_card' && sub.asaasSubscriptionId) {
+    if (isMonthly(sub.method) && sub.asaasSubscriptionId) {
       try {
         await this.webhook.reconcileSubscription(sub.asaasSubscriptionId);
       } catch (err: unknown) {
@@ -411,23 +410,15 @@ export class BillingService {
     }
   }
 
+  /**
+   * Quanto custa contratar, por método. Os dois anuais custam o mesmo — o desconto de
+   * 25% vale para Pix e cartão, e não há mais parcelamento para diferenciá-los.
+   */
   getPreview(query: BillingPreviewQueryDto) {
     const { seats, method } = query;
-    if (method === PreviewMethod.monthly) {
-      return { method, seats, totalCents: monthlyTotalCents(seats), installments: 1 };
-    }
-    if (method === PreviewMethod.annual_pix) {
-      return { method, seats, totalCents: annualTotalCents(seats), installments: 1 };
-    }
-    const installments = query.installments ?? 1;
-    const totalCents = annualCardTotalCents(seats, installments, this.annualInterestRate());
-    return {
-      method,
-      seats,
-      totalCents,
-      installments,
-      ...installmentPreview(totalCents, installments),
-    };
+    const totalCents =
+      method === PreviewMethod.monthly ? monthlyTotalCents(seats) : annualTotalCents(seats);
+    return { method, seats, totalCents, installments: 1 };
   }
 
   async getHistory(companyId: string, query: ListChargesQueryDto) {
@@ -538,15 +529,41 @@ export class BillingService {
   }
 
   /**
-   * Assinar o anual no Pix. Passou a ser uma **assinatura YEARLY nativa do Asaas**: o
-   * provedor gera a cobrança de cada ano sozinho e o cliente só paga o Pix novo — some
-   * a recontratação manual que o anual exigia.
+   * Assinar o mensal no Pix — assinatura MONTHLY nativa do Asaas.
    *
-   * O Pix continua sendo exibido por nós (QR + copia-e-cola), não pelo checkout: é o
-   * fluxo que já funciona e não tem cartão envolvido.
+   * É a forma de pagamento de quem não tem cartão de crédito. **Não é débito
+   * automático:** o Asaas emite um Pix novo a cada mês e o cliente paga o QR. Pix
+   * Automático (com débito de verdade) foi descartado porque o valor fica congelado no
+   * consentimento do pagador, e o preço daqui varia com a quantidade de assentos.
+   */
+  async subscribeMonthlyPix(companyId: string, dto: SubscribeMonthlyPixDto = {}) {
+    return this.contratarAssinaturaPix(companyId, dto, 'monthly_pix');
+  }
+
+  /**
+   * Assinar o anual no Pix. Assinatura YEARLY nativa do Asaas: o provedor gera a
+   * cobrança de cada ano sozinho e o cliente só paga o Pix novo — some a recontratação
+   * manual que o anual exigia.
    */
   async subscribeAnnualPix(companyId: string, dto: SubscribeAnnualPixDto = {}) {
+    return this.contratarAssinaturaPix(companyId, dto, 'annual_pix');
+  }
+
+  /**
+   * O caminho comum dos dois planos em Pix. Só a cadência muda — valor, ciclo e período
+   * saem dela — e manter isto num lugar só é o que garante que mensal e anual não
+   * divirjam em cima de uma correção feita num deles.
+   *
+   * O Pix é exibido por nós (QR + copia-e-cola), não pelo checkout hospedado: não há
+   * cartão envolvido, então não há motivo para tirar o cliente do app.
+   */
+  private async contratarAssinaturaPix(
+    companyId: string,
+    dto: SeatsChoiceDto,
+    method: 'monthly_pix' | 'annual_pix',
+  ) {
     this.assertBillingEnabled();
+    const anual = isAnnual(method);
     return this.repo.withCompanyLock(companyId, async () => {
       const sub = await this.getSubscriptionOrThrow(companyId);
       this.assertPerfilCompleto(sub);
@@ -554,13 +571,13 @@ export class BillingService {
       this.assertSemCancelamentoAgendado(sub);
 
       const now = new Date();
-      const amountCents = annualTotalCents(seats);
+      const amountCents = anual ? annualTotalCents(seats) : monthlyTotalCents(seats);
 
       // ANTES de qualquer coisa destrutiva: já existe um Pix aberto e válido para o
       // mesmo plano **e a mesma quantidade**? Então devolve o MESMO QR (B2). Fazer o
       // teardown primeiro apagaria a assinatura que gerou esse QR — o duplo clique
       // deixaria o cliente com um código de barras que não cobra mais nada.
-      const reused = await this.settleOpenCharge(sub.id, 'subscription', 'annual_pix', now, seats);
+      const reused = await this.settleOpenCharge(sub.id, 'subscription', method, now, seats);
       if (reused) return this.getStatus(companyId);
 
       const inicio = await this.prepareForNewSubscription(sub, companyId);
@@ -581,20 +598,21 @@ export class BillingService {
         installments: 1,
         seats,
         periodStart: inicio,
-        periodEnd: addYears(inicio, 1),
-        metadata: { method: 'annual_pix' },
+        periodEnd: anual ? addYears(inicio, 1) : addMonths(inicio, 1),
+        metadata: { method },
       });
 
+      const cadencia = anual ? 'anual' : 'mensal';
       let asaasSub: { id: string };
       try {
         asaasSub = await this.asaas.createSubscription({
           customer: customerId,
           billingType: 'PIX',
           value: this.reais(amountCents),
-          cycle: 'YEARLY',
+          cycle: cycleOf(method),
           nextDueDate: formatInTimeZone(inicio, TZ, 'yyyy-MM-dd'),
           externalReference: externalReference(sub.id),
-          description: `TaskDY — assinatura anual (${seats} usuário(s))`,
+          description: `TaskDY — assinatura ${cadencia} (${seats} usuário(s))`,
         });
       } catch (err: unknown) {
         await this.failCharge(charge.id, err);
@@ -602,7 +620,7 @@ export class BillingService {
       }
 
       await this.repo.updateSubscription(sub.id, {
-        method: 'annual_pix',
+        method,
         purchasedSeats: seats,
         asaasCustomerId: customerId,
         asaasSubscriptionId: asaasSub.id,
@@ -619,9 +637,10 @@ export class BillingService {
           subscriptionId: sub.id,
           chargeId: charge.id,
           asaasSubscriptionId: asaasSub.id,
+          method,
           seats,
         },
-        'Assinatura anual (Pix) criada no Asaas',
+        `Assinatura ${cadencia} (Pix) criada no Asaas`,
       );
       return this.getStatus(companyId);
     });
@@ -669,10 +688,12 @@ export class BillingService {
   }
 
   /**
-   * Assinar o anual no cartão: compra única em até 12× sem juros, na página hospedada
-   * do Asaas. Continua **não** sendo recorrente — é o preço de manter o parcelamento,
-   * que o Asaas não combina com assinatura. A renovação segue manual, com os avisos de
-   * D-15/D-7/D-1 que o cron já emite.
+   * Assinar o anual no cartão: pagamento único por ano, na página hospedada do Asaas.
+   *
+   * É uma **assinatura YEARLY**, não uma compra avulsa. Era o parcelamento que o
+   * impedia — o Asaas não combina parcelamento com assinatura — e com o 12× fora do
+   * produto a trava caiu. O Asaas guarda o cartão e cobra o ano seguinte sozinho; o
+   * cron D-15/D-7/D-1 deixou de ser cobrança manual e virou aviso prévio do débito.
    */
   async subscribeAnnualCard(companyId: string, dto: SubscribeAnnualCardDto) {
     this.assertBillingEnabled();
@@ -685,8 +706,6 @@ export class BillingService {
 
       const now = new Date();
       const amountCents = annualTotalCents(seats);
-      // O cliente escolhe o parcelamento na página do Asaas; aqui definimos o teto.
-      const maxParcelas = Math.min(dto.installments ?? 12, maxAnnualInstallments(amountCents));
 
       // Checkout aberto do mesmo intento → devolve o link em vez de criar outro (D10).
       const aberta = await this.settleOpenCharge(
@@ -706,7 +725,7 @@ export class BillingService {
           paymentKind: 'credit_card',
           status: 'pending',
           amountCents,
-          installments: maxParcelas,
+          installments: 1,
           seats,
           periodStart: inicio,
           periodEnd: addYears(inicio, 1),
@@ -716,7 +735,10 @@ export class BillingService {
       const sessao = await this.checkout.abrir(charge, atualizada, 'plan_annual_card', {
         descricao: `TaskDY anual (${seats} usuário${seats > 1 ? 's' : ''})`,
         amountCents,
-        maxInstallmentCount: maxParcelas,
+        cycle: 'YEARLY',
+        // A âncora do R47, não "hoje": quem renova antes de vencer não pode ter o
+        // segundo ano cobrado cedo demais.
+        nextDueDate: inicio,
       });
 
       await this.repo.updateSubscription(atualizada.id, {
@@ -725,7 +747,7 @@ export class BillingService {
       });
 
       this.logger.info(
-        { companyId, subscriptionId: atualizada.id, chargeId: charge.id, maxParcelas, seats },
+        { companyId, subscriptionId: atualizada.id, chargeId: charge.id, seats },
         'Checkout do plano anual (cartão) aberto',
       );
       return { ...sessao, status: await this.getStatus(companyId) };
@@ -801,7 +823,7 @@ export class BillingService {
       }
 
       const paymentKind = dto.paymentKind ?? 'credit_card';
-      return sub.method === 'monthly_card'
+      return isMonthly(sub.method)
         ? this.buySeatsOnMonthly(sub, companyId, dto.quantity, paymentKind)
         : this.buySeatsOnAnnual(sub, companyId, dto.quantity, paymentKind);
     });
@@ -944,7 +966,7 @@ export class BillingService {
       seats: sub.purchasedSeats + sub.addonSeats + dados.quantity,
       seatsDelta: dados.quantity,
       periodStart: now,
-      periodEnd: sub.method === 'monthly_card' ? sub.currentPeriodEnd : addYears(now, 1),
+      periodEnd: isMonthly(sub.method) ? sub.currentPeriodEnd : addYears(now, 1),
       metadata: { method: sub.method, paymentKind: dados.paymentKind },
     });
   }
@@ -1035,10 +1057,8 @@ export class BillingService {
     this.assertBillingEnabled();
     return this.repo.withCompanyLock(companyId, async () => {
       const sub = await this.getSubscriptionOrThrow(companyId);
-      if (sub.method !== 'monthly_card') {
-        throw new BadRequestException(
-          'Reduzir usuários só está disponível no plano mensal no cartão',
-        );
+      if (!isMonthly(sub.method)) {
+        throw new BadRequestException('Reduzir usuários só está disponível no plano mensal');
       }
       // Agendar redução só faz sentido havendo próxima renovação (C3).
       if (sub.status !== 'active' && sub.status !== 'past_due') {
@@ -1144,7 +1164,7 @@ export class BillingService {
       ? totalAtual + quantity
       : Math.max(1, sub.purchasedSeats - quantity) + sub.addonSeats;
 
-    const anual = sub.method === 'annual_pix' || sub.method === 'annual_card';
+    const anual = isAnnual(sub.method);
     const cicloVivo = !!sub.currentPeriodEnd && sub.currentPeriodEnd > now;
     const planoDepois = comprando
       ? sub.purchasedSeats + (anual ? 0 : quantity)
@@ -1177,17 +1197,15 @@ export class BillingService {
     if (!comprando) {
       return {
         ...comum,
-        disponivel: sub.method === 'monthly_card',
-        indisponivelPorque:
-          sub.method === 'monthly_card'
-            ? null
-            : 'Reduzir usuários só está disponível no plano mensal no cartão',
+        disponivel: isMonthly(sub.method),
+        indisponivelPorque: isMonthly(sub.method)
+          ? null
+          : 'Reduzir usuários só está disponível no plano mensal',
         cobrancaAgoraCents: 0,
         baseDoCalculo: null,
-        proximaFatura:
-          sub.method === 'monthly_card'
-            ? { vencimentoEm: sub.currentPeriodEnd, mensalidadeCents: valorDepois }
-            : null,
+        proximaFatura: isMonthly(sub.method)
+          ? { vencimentoEm: sub.currentPeriodEnd, mensalidadeCents: valorDepois }
+          : null,
         assentoDisponivelEm: 'na_renovacao' as const,
       };
     }
@@ -1205,7 +1223,7 @@ export class BillingService {
     }
 
     // Mensal: cobrança avulsa de valor cheio agora; a mensalidade sobe da próxima.
-    if (sub.method === 'monthly_card') {
+    if (isMonthly(sub.method)) {
       const cobrancaAgoraCents = monthlySeatChargeCents(quantity);
       return {
         ...comum,
@@ -1281,10 +1299,9 @@ export class BillingService {
         throw new BadRequestException('Ciclo de cobrança vencido ou ainda não definido');
       }
 
-      const resultado =
-        sub.method === 'monthly_card'
-          ? await this.buySeatsOnMonthly(sub, companyId, quantity, 'pix')
-          : await this.buySeatsOnAnnual(sub, companyId, quantity, 'pix');
+      const resultado = isMonthly(sub.method)
+        ? await this.buySeatsOnMonthly(sub, companyId, quantity, 'pix')
+        : await this.buySeatsOnAnnual(sub, companyId, quantity, 'pix');
       void resultado;
 
       const charge = await this.repo.findOpenChargeByIntent(sub.id, 'seat');
@@ -1343,7 +1360,7 @@ export class BillingService {
    * falhar, e a compra não deve cair por causa disso; o cron reexecuta.
    */
   async syncMonthlyValue(sub: Subscription, companyId: string): Promise<void> {
-    if (sub.method !== 'monthly_card' || !sub.asaasSubscriptionId) return;
+    if (!isMonthly(sub.method) || !sub.asaasSubscriptionId) return;
     const seats = sub.seatsAtNextRenewal ?? sub.purchasedSeats;
     try {
       await this.asaas.updateSubscriptionValue(sub.asaasSubscriptionId, monthlyValueReais(seats));
@@ -1359,7 +1376,15 @@ export class BillingService {
    * Cancelamento self-service do admin (R25/R26): agenda o cancelamento para o
    * fim do ciclo já pago. O acesso segue até `currentPeriodEnd`, quando o cron
    * (`handleCancellations`) vira `canceled` e a empresa cai em somente-leitura.
-   * No mensal, encerra já a recorrência no Asaas para não gerar nova cobrança.
+   *
+   * **Quando a recorrência morre depende do ciclo.** No mensal a próxima cobrança sai
+   * em até um mês — quase sempre antes do fim do ciclo pago — então ela é encerrada
+   * agora. No anual a próxima está a até um ano de distância, sempre *depois* de
+   * `currentPeriodEnd`: mantê-la viva é seguro e é o que permite `reactivate` ser um
+   * flag-flip. Quem a derruba, no anual, é o `handleCancellations` no vencimento.
+   *
+   * Derrubar a recorrência anual aqui foi um bug real: `reactivate` não a recriava, e
+   * a empresa voltava a `active` sem nada cobrando — ativa para sempre, de graça.
    */
   async cancel(companyId: string) {
     this.assertBillingEnabled();
@@ -1373,14 +1398,18 @@ export class BillingService {
     // Idempotente: já agendado → só devolve o status atual.
     if (sub.cancelAtPeriodEnd) return this.getStatus(companyId);
 
-    await this.tearDownAsaasSubscription(sub, companyId);
+    // `past_due` derruba agora seja qual for o ciclo: há uma fatura vencida em voo, e
+    // deixar o Asaas seguir tentando cobrá-la é cobrar quem acabou de cancelar.
+    const encerrarAgora = isMonthly(sub.method) || sub.status === 'past_due';
+    if (encerrarAgora) await this.tearDownAsaasSubscription(sub, companyId);
+
     // As assinaturas de assentos anuais têm vida própria no Asaas e renovariam sozinhas
     // depois de a empresa cancelar. Cancelar o plano tem que levá-las junto — senão o
     // cliente cancela e continua sendo cobrado todo ano por assentos que não usa.
     await this.cancelarAddonsDaEmpresa(companyId, 'cancelamento do plano');
     await this.repo.updateSubscription(sub.id, {
       cancelAtPeriodEnd: true,
-      asaasSubscriptionId: null,
+      ...(encerrarAgora ? { asaasSubscriptionId: null } : {}),
     });
     this.logger.info(
       { companyId, subscriptionId: sub.id, currentPeriodEnd: sub.currentPeriodEnd },
@@ -1436,10 +1465,14 @@ export class BillingService {
    * Desfaz um cancelamento agendado: a assinatura ainda está `active` com
    * `cancelAtPeriodEnd = true`.
    *
-   * No anual (compra única ou assinatura Pix que segue viva) basta limpar o flag. No
-   * mensal a recorrência foi encerrada no Asaas ao cancelar e o cartão vive lá — então
-   * reativar significa **abrir um checkout novo**, que recria a recorrência cobrando só
-   * a partir do fim do período já pago. A resposta traz o link.
+   * O critério é **ter ou não recorrência viva no Asaas**, não o método. No anual
+   * `cancel` a deixou de pé de propósito, então basta limpar o flag. Quando ela foi
+   * derrubada — o mensal sempre, e qualquer plano cancelado em carência — reativar
+   * significa **abrir um checkout novo**, que recria a recorrência cobrando só a partir
+   * do fim do período já pago. A resposta traz o link.
+   *
+   * Decidir isso pelo método era o bug: um anual sem recorrência caía no flag-flip e a
+   * empresa voltava a `active` sem nada cobrando.
    */
   async reactivate(companyId: string) {
     this.assertBillingEnabled();
@@ -1448,7 +1481,8 @@ export class BillingService {
       throw new BadRequestException('Não há cancelamento agendado para reativar');
     }
 
-    if (sub.method === 'monthly_card' && !sub.asaasSubscriptionId) {
+    const noCartao = isCard(sub.method);
+    if (noCartao && !sub.asaasSubscriptionId) {
       this.assertPerfilCompleto(sub);
       if (!sub.asaasCustomerId || !sub.currentPeriodEnd) {
         throw new BadRequestException(
@@ -1552,9 +1586,13 @@ export class BillingService {
   }
 
   /**
-   * Troca o cartão da assinatura mensal. Sem formulário: abre um checkout novo, que
-   * recria a recorrência no Asaas com o cartão que o cliente digitar lá, cobrando a
-   * partir do fim do ciclo já pago.
+   * Troca o cartão da assinatura. Sem formulário: abre um checkout novo, que recria a
+   * recorrência no Asaas com o cartão que o cliente digitar lá, cobrando a partir do
+   * fim do ciclo já pago.
+   *
+   * Vale nos dois planos de cartão. No anual isso deixou de ser opcional quando ele
+   * passou a renovar sozinho: o cartão fica guardado no Asaas por um ano inteiro e vai
+   * expirar antes da renovação — sem esta rota, o cliente não teria como atualizá-lo.
    *
    * **Não quita a fatura em atraso** — quem faz isso é o outro botão
    * (`getFaturaEmAtraso`), que leva à página da própria cobrança. Separar os dois é o
@@ -1565,8 +1603,8 @@ export class BillingService {
     this.assertBillingEnabled();
     return this.repo.withCompanyLock(companyId, async () => {
       const sub = await this.getSubscriptionOrThrow(companyId);
-      if (sub.method !== 'monthly_card') {
-        throw new BadRequestException('Só a assinatura mensal no cartão tem cartão para atualizar');
+      if (!isCard(sub.method)) {
+        throw new BadRequestException('Só as assinaturas no cartão têm cartão para atualizar');
       }
       if (sub.status !== 'active' && sub.status !== 'past_due') {
         throw new BadRequestException('Não há assinatura vigente para atualizar o cartão');
@@ -1586,9 +1624,13 @@ export class BillingService {
   }
 
   /**
-   * Abre o checkout que (re)cria a recorrência mensal — caminho comum de "trocar
-   * cartão" e "reativar". A recorrência antiga é derrubada antes: duas recorrências
-   * vivas cobram em dobro, e o cartão novo só existe do lado do Asaas.
+   * Abre o checkout que (re)cria a recorrência do cartão — caminho comum de "trocar
+   * cartão" e "reativar", nos dois ciclos. A recorrência antiga é derrubada antes:
+   * duas recorrências vivas cobram em dobro, e o cartão novo só existe do lado do
+   * Asaas.
+   *
+   * A cobrança nasce com `nextDueDate` no fim do ciclo já pago — trocar o cartão não
+   * antecipa a renovação nem cobra de novo o período que o cliente já pagou.
    */
   private async abrirCheckoutDaRecorrencia(
     sub: Subscription,
@@ -1599,15 +1641,16 @@ export class BillingService {
     await this.tearDownAsaasSubscription(sub, companyId);
     await this.repo.updateSubscription(sub.id, { asaasSubscriptionId: null });
 
+    // Só é alcançável pelos métodos de cartão (`trocarCartao` e `reactivate` gateiam
+    // por `isCard`), mas o método é lido do plano em vez de deduzido: coagir um método
+    // desconhecido para `monthly_card` gravaria a cobrança com o plano errado.
+    const method = sub.method as 'monthly_card' | 'annual_card';
+    const anual = isAnnual(method);
+    // Reduzir assentos só existe no mensal, então no anual `seatsAtNextRenewal` é
+    // sempre nulo — a expressão serve aos dois.
     const seats = sub.seatsAtNextRenewal ?? sub.purchasedSeats;
-    const amountCents = monthlyTotalCents(seats);
-    const aberta = await this.settleOpenCharge(
-      sub.id,
-      'subscription',
-      'monthly_card',
-      new Date(),
-      seats,
-    );
+    const amountCents = anual ? annualTotalCents(seats) : monthlyTotalCents(seats);
+    const aberta = await this.settleOpenCharge(sub.id, 'subscription', method, new Date(), seats);
     const charge =
       aberta ??
       (await this.repo.createCharge({
@@ -1621,13 +1664,13 @@ export class BillingService {
         seats,
         periodStart: desde,
         periodEnd: null,
-        metadata: { method: 'monthly_card', intent: 'card_update', motivo },
+        metadata: { method, intent: 'card_update', motivo },
       }));
 
     return this.checkout.abrir(charge, sub, 'card_update', {
-      descricao: `TaskDY mensal (${seats} usuário${seats > 1 ? 's' : ''})`,
+      descricao: `TaskDY ${anual ? 'anual' : 'mensal'} (${seats} usuário${seats > 1 ? 's' : ''})`,
       amountCents,
-      cycle: 'MONTHLY',
+      cycle: anual ? 'YEARLY' : 'MONTHLY',
       nextDueDate: desde,
     });
   }
@@ -1875,12 +1918,6 @@ export class BillingService {
     if (this.config.get<string>('BILLING_ENABLED') !== 'true') {
       throw new ServiceUnavailableException('Cobrança temporariamente indisponível');
     }
-  }
-
-  private annualInterestRate(): number {
-    const raw = this.config.get<string>('BILLING_ANNUAL_INTEREST_MONTHLY');
-    const parsed = raw ? Number(raw) : NaN;
-    return Number.isFinite(parsed) ? parsed : DEFAULT_ANNUAL_INTEREST_MONTHLY;
   }
 
   /** Centavos int → reais decimais (2 casas), na borda do Asaas. */

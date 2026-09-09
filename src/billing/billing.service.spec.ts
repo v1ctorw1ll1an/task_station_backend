@@ -191,16 +191,15 @@ describe('BillingService', () => {
       });
     });
 
-    it('anual-cartão inclui juros e devolve o valor da parcela', () => {
+    it('anual-cartão custa o mesmo que o anual-pix — pagamento único, sem parcelas', () => {
       const { service } = makeService(makeSub());
-      const r = service.getPreview({
-        seats: 1,
-        method: PreviewMethod.annual_card,
-        installments: 3,
-      });
-      expect(r.installments).toBe(3);
-      expect(r.totalCents).toBeGreaterThanOrEqual(44910);
-      expect(r).toHaveProperty('installmentCents');
+      const cartao = service.getPreview({ seats: 1, method: PreviewMethod.annual_card });
+      const pix = service.getPreview({ seats: 1, method: PreviewMethod.annual_pix });
+
+      expect(cartao.totalCents).toBe(44910);
+      expect(cartao.totalCents).toBe(pix.totalCents);
+      expect(cartao.installments).toBe(1);
+      expect(cartao).not.toHaveProperty('installmentCents');
     });
   });
 
@@ -434,19 +433,22 @@ describe('BillingService', () => {
   });
 
   describe('subscribeAnnualCard', () => {
-    it('abre um checkout parcelado — o cliente escolhe as parcelas na página do Asaas', async () => {
+    it('abre um checkout de assinatura anual — pagamento único que renova sozinho', async () => {
       const { service, repo, asaas } = makeService(makeSub());
-      await service.subscribeAnnualCard('company-1', { installments: 3 });
+      await service.subscribeAnnualCard('company-1', {});
 
       expect(repo.createCharge).toHaveBeenCalledWith(
-        expect.objectContaining({ paymentKind: 'credit_card', installments: 3 }),
+        expect.objectContaining({ paymentKind: 'credit_card', installments: 1 }),
       );
       expect(asaas.createCheckout).toHaveBeenCalledWith(
         expect.objectContaining({
-          chargeTypes: ['INSTALLMENT'],
-          installment: { maxInstallmentCount: 3 },
+          chargeTypes: ['RECURRENT'],
+          subscription: expect.objectContaining({ cycle: 'YEARLY' }),
         }),
       );
+      // A trava que impede o parcelamento de voltar: enquanto o checkout do anual for
+      // recorrente, mandar `installment` junto é o que o Asaas recusa.
+      expect(asaas.createCheckout.mock.calls[0][0]).not.toHaveProperty('installment');
       expect(asaas.createPayment).not.toHaveBeenCalled();
       expect(repo.updateSubscription).toHaveBeenCalledWith(
         'sub-uuid',

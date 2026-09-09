@@ -1,15 +1,10 @@
 import {
   ANNUAL_SEAT_CENTS,
-  annualCardTotalCents,
   annualSeatChargeCents,
   annualSeatValueReais,
   annualTotalCents,
   annualValueReais,
   entitledSeats,
-  installmentPreview,
-  installmentTotalCents,
-  maxAnnualInstallments,
-  MIN_INSTALLMENT_CENTS,
   monthlySeatChargeCents,
   monthlyTotalCents,
   monthlyValueReais,
@@ -88,88 +83,20 @@ describe('pricing', () => {
     });
   });
 
-  // ── Parcelamento (só o plano anual no cartão) ──────────────────────────────
+  // ── Travas de regressão: o que saiu do produto não volta de fininho ────────
 
-  describe('installmentTotalCents', () => {
-    it('é a mesma conta que o anual no cartão usa (uma fórmula só)', () => {
-      expect(installmentTotalCents(annualTotalCents(1), 12)).toBe(annualCardTotalCents(1, 12));
-      expect(installmentTotalCents(annualTotalCents(3), 5)).toBe(annualCardTotalCents(3, 5));
-    });
-
-    it('à vista não tem juros', () => {
-      expect(installmentTotalCents(21492, 1)).toBe(21492);
-    });
-
-    it('parcelar não encarece com a taxa padrão (R36/R45)', () => {
-      // A regra da casa: 12× custa o mesmo que à vista. A fórmula de juros continua
-      // existindo porque a taxa é configurável por env — mas o padrão é zero.
-      for (const n of [2, 6, 12]) {
-        expect(installmentTotalCents(21492, n)).toBe(21492);
-      }
-    });
-  });
-
-  describe('maxAnnualInstallments', () => {
-    it('o anual de 1 assento cabe nas 12 parcelas cheias', () => {
-      expect(maxAnnualInstallments(annualTotalCents(1))).toBe(12);
-    });
-
-    it('cai sozinho quando a parcela ficaria abaixo do piso do Asaas', () => {
-      // R$19,90 só cabe em 3× de R$6,63.
-      expect(maxAnnualInstallments(1990)).toBe(3);
-      expect(1990 / 3).toBeGreaterThanOrEqual(MIN_INSTALLMENT_CENTS);
-    });
-
-    it('nunca devolve 0 — à vista sempre cabe', () => {
-      expect(maxAnnualInstallments(100)).toBe(1);
-      expect(maxAnnualInstallments(0)).toBe(1);
-    });
-  });
-
-  describe('annualCardTotalCents', () => {
-    it('com 1 parcela é igual ao anual à vista', () => {
-      expect(annualCardTotalCents(1, 1)).toBe(annualTotalCents(1));
-    });
-
-    it('em 12× custa o mesmo que à vista (R36)', () => {
-      expect(annualCardTotalCents(1, 12)).toBe(annualTotalCents(1)); // R$449,10
-      expect(annualCardTotalCents(1, 6)).toBe(annualTotalCents(1));
-    });
-
-    it('respeita uma taxa customizada, se a política voltar a cobrar juros', () => {
-      // 44910 × (1 + 0,0199 × 12) = 55635 (arredondado)
-      expect(annualCardTotalCents(1, 12, 0.0199)).toBe(55635);
-      expect(annualCardTotalCents(1, 6, 0.0199)).toBeGreaterThan(annualTotalCents(1));
-    });
-
-    it('rejeita número de parcelas fora de 1..12', () => {
-      expect(() => annualCardTotalCents(1, 0)).toThrow(RangeError);
-      expect(() => annualCardTotalCents(1, 13)).toThrow(RangeError);
-    });
-  });
-
-  describe('installmentPreview', () => {
-    it('ajusta o resto na última parcela (como o Asaas)', () => {
-      // Anual de 1 assento em 12×: 44910 não divide certo.
-      const { installmentCents, lastInstallmentCents } = installmentPreview(44910, 12);
-      expect(installmentCents).toBe(3742); // floor(44910 / 12)
-      expect(lastInstallmentCents).toBe(3748); // 44910 − 3742 × 11
-      expect(installmentCents * 11 + lastInstallmentCents).toBe(44910);
-    });
-
-    it('divide exatamente quando não há resto', () => {
-      const { installmentCents, lastInstallmentCents } = installmentPreview(1200, 3);
-      expect(installmentCents).toBe(400);
-      expect(lastInstallmentCents).toBe(400);
-    });
-  });
-
-  // ── Trava de regressão: proração não pode voltar de fininho ────────────────
-
-  describe('ausência de proração', () => {
+  describe('ausência de proração e de parcelamento', () => {
     it('o módulo não exporta mais nenhuma função de proração', () => {
       const exportados = Object.keys(jest.requireActual<Record<string, unknown>>('./pricing'));
       expect(exportados.filter((n) => /proration|proracao/i.test(n))).toEqual([]);
+    });
+
+    it('o módulo não exporta mais nenhuma conta de parcelamento', () => {
+      // O anual é pagamento único — e é isso que permite ele ser assinatura no Asaas,
+      // que não combina parcelamento com recorrência. Reintroduzir qualquer uma destas
+      // funções significa ter desfeito a renovação automática sem perceber.
+      const exportados = Object.keys(jest.requireActual<Record<string, unknown>>('./pricing'));
+      expect(exportados.filter((n) => /installment|parcel/i.test(n))).toEqual([]);
     });
 
     it('o preço do assento não muda com a data da compra', () => {

@@ -14,10 +14,9 @@
  * é feita. O que muda é *quando* passa a valer, não o preço: a compra libera o
  * assento assim que o pagamento é confirmado, e a redução só vale na renovação.
  *
- * **Parcelar não encarece** (R36/R45): o total do anual é o mesmo à vista ou em 12×.
- * A taxa de parcelamento do Asaas é absorvida pela casa. A fórmula com juros continua
- * aqui (`installmentTotalCents`) porque a taxa é configurável por env e voltar atrás é
- * mudar um número, não reescrever preço.
+ * **Não existe parcelamento.** O anual é pagamento único, no Pix ou no cartão, pelo
+ * mesmo valor nos dois. Foi tirar o 12× que permitiu o anual no cartão virar
+ * assinatura recorrente — o Asaas não combina parcelamento com assinatura.
  */
 
 export const MONTHLY_BASE_CENTS = 4_990; // inclui o 1º assento (R8/R11)
@@ -35,13 +34,6 @@ export const ANNUAL_DISCOUNT = 0.25; // 25% no plano anual (Pix e cartão)
  * R$179,10.
  */
 export const ANNUAL_SEAT_CENTS = Math.round(MONTHLY_EXTRA_SEAT_CENTS * 12 * (1 - ANNUAL_DISCOUNT));
-/**
- * Juros a.m. repassados ao cliente no parcelado. **Zero**: parcelar em 12× custa o
- * mesmo que pagar à vista (R36/R45). Continua configurável por
- * `BILLING_ANNUAL_INTEREST_MONTHLY` para o caso de a política mudar.
- */
-export const DEFAULT_ANNUAL_INTEREST_MONTHLY = 0;
-export const MIN_INSTALLMENT_CENTS = 500; // piso do Asaas por parcela (R$5,00)
 
 /** Valor mensal total para `seats` assentos comprados. */
 export function monthlyTotalCents(seats: number): number {
@@ -103,58 +95,6 @@ export function entitledSeats(sub: { purchasedSeats: number; addonSeats: number 
   return sub.purchasedSeats + sub.addonSeats;
 }
 
-/**
- * Total de uma compra parcelada no cartão. Com a taxa em zero (padrão hoje) o
- * parcelado custa o mesmo que o à vista — é a regra atual: o cliente escolhe em
- * quantas vezes pagar sem que isso mude o preço. `monthlyRate` vem do env, pelo
- * service; se voltar a ser > 0, os juros são lineares a.m. e pagos pelo cliente.
- */
-export function installmentTotalCents(
-  baseCents: number,
-  installments: number,
-  monthlyRate: number = DEFAULT_ANNUAL_INTEREST_MONTHLY,
-): number {
-  assertInstallments(installments);
-  if (installments <= 1) return baseCents;
-  return Math.round(baseCents * (1 + monthlyRate * installments));
-}
-
-/**
- * Parcelas oferecidas no plano anual no cartão. Dois tetos, o menor vence: 12× do
- * cartão e o **piso do Asaas por parcela** (R$5,00). Nunca devolve 0: à vista sempre
- * cabe.
- */
-export function maxAnnualInstallments(totalCents: number): number {
-  return clamp(Math.min(12, Math.floor(totalCents / MIN_INSTALLMENT_CENTS)), 1, 12);
-}
-
-/**
- * Valor total do anual no cartão parcelado. Igual ao anual à vista enquanto a taxa
- * de juros estiver em zero (R36) — o número de parcelas não muda o total.
- */
-export function annualCardTotalCents(
-  seats: number,
-  installments: number,
-  monthlyRate: number = DEFAULT_ANNUAL_INTEREST_MONTHLY,
-): number {
-  return installmentTotalCents(annualTotalCents(seats), installments, monthlyRate);
-}
-
-/**
- * Divisão do total em parcelas para PREVIEW. O Asaas faz a divisão real com o
- * ajuste do arredondamento na ÚLTIMA parcela — espelhamos esse comportamento
- * para que o valor exibido bata com o cobrado.
- */
-export function installmentPreview(
-  totalCents: number,
-  installments: number,
-): { installmentCents: number; lastInstallmentCents: number } {
-  assertInstallments(installments);
-  const installmentCents = Math.floor(totalCents / installments);
-  const lastInstallmentCents = totalCents - installmentCents * (installments - 1);
-  return { installmentCents, lastInstallmentCents };
-}
-
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 function assertSeats(seats: number): void {
@@ -167,14 +107,4 @@ function assertQuantity(quantity: number): void {
   if (!Number.isInteger(quantity) || quantity < 1) {
     throw new RangeError(`quantity deve ser inteiro >= 1 (recebido: ${quantity})`);
   }
-}
-
-function assertInstallments(installments: number): void {
-  if (!Number.isInteger(installments) || installments < 1 || installments > 12) {
-    throw new RangeError(`installments deve ser inteiro entre 1 e 12 (recebido: ${installments})`);
-  }
-}
-
-function clamp(value: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, value));
 }

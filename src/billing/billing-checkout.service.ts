@@ -23,7 +23,14 @@ import {
 
 const TZ = 'America/Sao_Paulo';
 
-/** Para que serve o checkout — decide `chargeTypes` e o texto que o cliente lê. */
+/**
+ * Para que serve o checkout — decide `chargeTypes` e o texto que o cliente lê.
+ *
+ * Só a compra de assento no mensal é avulsa (`DETACHED`); todo o resto é assinatura
+ * no Asaas. O anual no cartão entrou nesse grupo quando o parcelamento saiu: era o
+ * parcelamento que o obrigava a ser compra única, porque o Asaas não combina as duas
+ * coisas.
+ */
 export type CheckoutIntent =
   | 'plan_monthly'
   | 'plan_annual_card'
@@ -45,13 +52,11 @@ interface AbrirOpts {
   cycle?: AsaasCycle;
   /** Data da primeira cobrança da recorrência (yyyy-MM-dd é montado aqui). */
   nextDueDate?: Date;
-  /** Teto de parcelas — só no `plan_annual_card`. */
-  maxInstallmentCount?: number;
 }
 
 const CHARGE_TYPE_BY_INTENT: Record<CheckoutIntent, AsaasChargeType> = {
   plan_monthly: 'RECURRENT',
-  plan_annual_card: 'INSTALLMENT',
+  plan_annual_card: 'RECURRENT',
   seat_monthly: 'DETACHED',
   seat_annual: 'RECURRENT',
   card_update: 'RECURRENT',
@@ -179,6 +184,14 @@ export class BillingCheckoutService {
     if (porReferencia.length === 1) return porReferencia[0].id;
 
     // 2. Sem referência, exige ciclo E valor batendo — e um candidato só.
+    //
+    // Com o plano anual virando YEARLY, ele passa a disputar este filtro com as
+    // assinaturas de assentos anuais, que também são YEARLY no mesmo cliente. Os
+    // valores não colidem por construção, não por sorte: o plano é
+    // `ANNUAL_SEAT_CENTS × s + 27000` (os 27000 são a base de R$49,90 anualizada com
+    // desconto) e o bloco de assentos é `ANNUAL_SEAT_CENTS × q` — como 27000 não é
+    // múltiplo de 17910, nenhum par (s, q) empata. Se a tabela de preços mudar, esta
+    // conta precisa ser refeita antes de confiar no fallback.
     const esperado = this.reais(charge.amountCents);
     const porValor = livres.filter(
       (s) =>
@@ -290,9 +303,6 @@ export class BillingCheckoutService {
         cycle: opts.cycle ?? 'MONTHLY',
         nextDueDate: formatInTimeZone(opts.nextDueDate ?? new Date(), TZ, 'yyyy-MM-dd'),
       };
-    }
-    if (chargeType === 'INSTALLMENT') {
-      base.installment = { maxInstallmentCount: opts.maxInstallmentCount ?? 1 };
     }
     return base;
   }

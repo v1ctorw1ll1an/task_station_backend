@@ -100,8 +100,15 @@ enum SubscriptionStatus {
   @@map("subscription_status")
 }
 
+/**
+ * Duas cadências × duas formas de pagamento. **Não leia o valor cru para perguntar
+ * "é mensal?" ou "é cartão?"** — use os helpers de `billing-method.ts`, que são a
+ * fonte única desses dois eixos. Ler o literal foi o que fez o mensal significar
+ * "cartão" por acidente enquanto ele era o único mensal.
+ */
 enum BillingMethod {
   monthly_card
+  monthly_pix
   annual_pix
   annual_card
 

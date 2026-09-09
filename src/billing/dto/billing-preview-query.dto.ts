@@ -1,6 +1,6 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsEnum, IsInt, Max, Min } from 'class-validator';
 
 export enum PreviewMethod {
   monthly = 'monthly',
@@ -20,12 +20,4 @@ export class BillingPreviewQueryDto {
   @ApiProperty({ enum: PreviewMethod })
   @IsEnum(PreviewMethod)
   method: PreviewMethod;
-
-  @ApiPropertyOptional({ minimum: 1, maximum: 12, description: 'Parcelas (só annual_card)' })
-  @IsOptional()
-  @Transform(({ value }) => parseInt(value as string, 10))
-  @IsInt()
-  @Min(1)
-  @Max(12)
-  installments?: number;
 }

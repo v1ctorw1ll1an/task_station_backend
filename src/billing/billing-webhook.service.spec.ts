@@ -504,6 +504,120 @@ describe('BillingWebhookService', () => {
     expect(repo.updateSubscription).not.toHaveBeenCalled();
   });
 
+  // ── Vínculo da assinatura criada pelo checkout ────────────────────────────
+  //
+  // Sem o `asaasSubscriptionId` gravado o estrago é duplo e silencioso: `cancel` não
+  // tem o que derrubar no Asaas (o cliente cancela e segue sendo cobrado) e a
+  // renovação do ciclo seguinte não é reconhecida (o cliente paga e segue bloqueado).
+
+  it('anual no cartão: grava a assinatura YEARLY que o checkout criou', async () => {
+    const repo = makeRepo({
+      findChargeByAsaasPaymentId: jest.fn().mockResolvedValue({
+        id: 'chg_1',
+        subscriptionId: 'sub_1',
+        companyId: 'c1',
+        type: 'subscription',
+      }),
+      findSubscriptionById: jest.fn().mockResolvedValue({
+        id: 'sub_1',
+        method: 'annual_card',
+        asaasSubscriptionId: null,
+        purchasedSeats: 1,
+        superadminLocked: false,
+        currentPeriodStart: null,
+      }),
+    });
+    checkout.resolverAssinatura.mockResolvedValueOnce('asub_yearly');
+    const service = makeService(
+      repo,
+      makeAsaas({ id: 'pay_1', status: 'CONFIRMED', value: 449.1 }),
+    );
+
+    await service.handle({
+      id: 'evt_1',
+      event: 'PAYMENT_CONFIRMED',
+      payment: { id: 'pay_1' } as never,
+    });
+
+    // O ciclo tem de ser YEARLY: procurar por MONTHLY não acha a assinatura do anual e
+    // deixaria a recorrência órfã.
+    expect(checkout.resolverAssinatura).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'YEARLY',
+    );
+    expect(repo.updateSubscription).toHaveBeenCalledWith('sub_1', {
+      asaasSubscriptionId: 'asub_yearly',
+    });
+  });
+
+  it('mensal continua sendo vinculado com ciclo MONTHLY', async () => {
+    const repo = makeRepo({
+      findChargeByAsaasPaymentId: jest.fn().mockResolvedValue({
+        id: 'chg_1',
+        subscriptionId: 'sub_1',
+        companyId: 'c1',
+        type: 'subscription',
+      }),
+      findSubscriptionById: jest.fn().mockResolvedValue({
+        id: 'sub_1',
+        method: 'monthly_card',
+        asaasSubscriptionId: null,
+        purchasedSeats: 1,
+        superadminLocked: false,
+        currentPeriodStart: null,
+      }),
+    });
+    checkout.resolverAssinatura.mockResolvedValueOnce('asub_monthly');
+    const service = makeService(repo, makeAsaas({ id: 'pay_1', status: 'CONFIRMED', value: 49.9 }));
+
+    await service.handle({
+      id: 'evt_1',
+      event: 'PAYMENT_CONFIRMED',
+      payment: { id: 'pay_1' } as never,
+    });
+
+    expect(checkout.resolverAssinatura).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'MONTHLY',
+    );
+    expect(repo.updateSubscription).toHaveBeenCalledWith('sub_1', {
+      asaasSubscriptionId: 'asub_monthly',
+    });
+  });
+
+  it('anual no Pix não passa pelo vínculo — a assinatura dele já nasce com id', async () => {
+    const repo = makeRepo({
+      findChargeByAsaasPaymentId: jest.fn().mockResolvedValue({
+        id: 'chg_1',
+        subscriptionId: 'sub_1',
+        companyId: 'c1',
+        type: 'subscription',
+      }),
+      findSubscriptionById: jest.fn().mockResolvedValue({
+        id: 'sub_1',
+        method: 'annual_pix',
+        asaasSubscriptionId: 'asub_pix',
+        purchasedSeats: 1,
+        superadminLocked: false,
+        currentPeriodStart: null,
+      }),
+    });
+    const service = makeService(
+      repo,
+      makeAsaas({ id: 'pay_1', status: 'CONFIRMED', value: 449.1 }),
+    );
+
+    await service.handle({
+      id: 'evt_1',
+      event: 'PAYMENT_CONFIRMED',
+      payment: { id: 'pay_1' } as never,
+    });
+
+    expect(checkout.resolverAssinatura).not.toHaveBeenCalled();
+  });
+
   // ── B6: assento só vale (e só encarece) depois de pago ─────────────────────
 
   it('assento pago incrementa o total e só então sobe o valor recorrente', async () => {

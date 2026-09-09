@@ -4,7 +4,6 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import type {
   BillingCharge,
   ChargeType,
-  PaymentKind,
   SeatAddon,
   Subscription,
 } from '../generated/prisma/client';
@@ -18,6 +17,7 @@ import { BillingAccessService } from './billing-access.service';
 import { BillingAlertsService } from './billing-alerts.service';
 import { BillingCheckoutService } from './billing-checkout.service';
 import { BillingRepository } from './billing.repository';
+import { cycleOf, isAnnual, isMonthly, paymentKindOf, usesHostedCheckout } from './billing-method';
 import { GRACE_DAYS } from './billing.constants';
 import { monthlyValueReais } from './pricing';
 
@@ -25,6 +25,14 @@ const PAID_EVENTS = new Set(['PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED', 'PAYMENT_R
 /** Eventos do checkout hospedado. `CHECKOUT_CREATED` não interessa (nós o criamos). */
 const CHECKOUT_EVENTS = new Set(['CHECKOUT_PAID', 'CHECKOUT_EXPIRED', 'CHECKOUT_CANCELED']);
 const PAID_STATUSES = new Set(['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH']);
+/**
+ * A cobrança do ciclo seguinte acabou de ser emitida pelo Asaas. Interessa por um
+ * motivo só, mas decisivo: no Pix é ela que carrega o QR que o cliente precisa pagar.
+ * Sem tratá-la, a cobrança só existiria para nós **depois** de paga ou vencida — ou
+ * seja, a tela não mostraria QR nenhum e o cliente descobriria a fatura ao ser
+ * bloqueado. No anual isso acontece uma vez por ano; no mensal, doze.
+ */
+const CREATED_EVENTS = new Set(['PAYMENT_CREATED']);
 const REVERSED_EVENTS = new Set([
   'PAYMENT_REFUNDED',
   'PAYMENT_DELETED',
@@ -286,6 +294,10 @@ export class BillingWebhookService {
       } else if (payment.status === 'OVERDUE') {
         await this.onOverdue(payment);
         this.metrics.billingReconcile('cron_subscription');
+      } else if (payment.status === 'PENDING') {
+        // Rede para o `PAYMENT_CREATED` perdido: sem isto, um webhook que não chegou
+        // deixaria o cliente sem o QR do mês inteiro.
+        await this.onCreated(payment);
       }
     }
   }
@@ -332,6 +344,10 @@ export class BillingWebhookService {
     if (REVERSED_EVENTS.has(event)) {
       await this.onReversed(fresh);
       return 'processed';
+    }
+
+    if (CREATED_EVENTS.has(event)) {
+      return this.onCreated(fresh);
     }
 
     this.logger.debug({ event }, 'Evento de webhook não tratado — ignorado');
@@ -502,8 +518,8 @@ export class BillingWebhookService {
     via: string,
   ): Promise<BillingCharge> {
     if (charge.asaasPaymentId) {
-      // Ids diferentes com o mesmo `externalReference` = parcelas 2…12 do anual-cartão:
-      // o pedido é o mesmo, a cobrança local já existe (e já estará paga).
+      // Já ligada a outro pagamento: o pedido é o mesmo e a cobrança local já existe
+      // (e já estará paga). Religar aqui trocaria o pagamento de dono.
       return charge;
     }
     this.logger.info(
@@ -565,18 +581,18 @@ export class BillingWebhookService {
     }
 
     const type: ChargeType = sub.currentPeriodStart ? 'renewal' : 'subscription';
-    const isAnnual = sub.method === 'annual_pix' || sub.method === 'annual_card';
+    const anual = isAnnual(sub.method);
     const data = {
       subscriptionId: sub.id,
       companyId: sub.companyId,
       type,
-      paymentKind: (sub.method === 'annual_pix' ? 'pix' : 'credit_card') as PaymentKind,
+      paymentKind: paymentKindOf(sub.method),
       status: 'pending' as const,
       amountCents: Math.round((payment.value ?? 0) * 100),
       installments: 1,
       seats: sub.purchasedSeats,
       periodStart: now,
-      periodEnd: isAnnual ? addYears(now, 1) : addMonths(now, 1),
+      periodEnd: anual ? addYears(now, 1) : addMonths(now, 1),
       asaasPaymentId: payment.id,
       // Sem o método gravado, o checkout trataria esta cobrança como "de outro
       // plano" e a cancelaria no Asaas — apagando uma cobrança legítima da
@@ -623,7 +639,7 @@ export class BillingWebhookService {
     await this.repo.updateSubscription(charge.subscriptionId, {
       purchasedSeats: { increment: charge.seatsDelta },
     });
-    if (sub?.method === 'monthly_card' && sub.asaasSubscriptionId) {
+    if (isMonthly(sub?.method ?? null) && sub?.asaasSubscriptionId) {
       await this.syncMonthlyValue(
         sub.asaasSubscriptionId,
         sub.purchasedSeats + charge.seatsDelta,
@@ -683,8 +699,16 @@ export class BillingWebhookService {
 
   /**
    * Grava o `asaasSubscriptionId` do plano quando ele nasce de um checkout recorrente.
-   * Sem isto não dá para reajustar o valor da mensalidade nem cancelar a recorrência —
-   * a assinatura existiria só do lado do Asaas.
+   *
+   * Vale para os dois planos que o checkout cria: mensal (MONTHLY) e anual no cartão
+   * (YEARLY). O anual no Pix não passa por aqui — a assinatura dele é criada por nós,
+   * direto na API, e o id já é gravado na contratação.
+   *
+   * Sem isto o estrago é duplo, e os dois lados custam dinheiro: `cancel` não teria o
+   * que derrubar no Asaas (o cliente cancela e segue sendo cobrado) e a renovação do
+   * ciclo seguinte não seria reconhecida — `resolveSubscription` procura a assinatura
+   * por este id, e o `externalReference` que o checkout propaga é o da cobrança, não o
+   * da assinatura. O cliente pagaria e continuaria bloqueado.
    */
   private async vincularAssinaturaDoPagamento(
     charge: BillingCharge,
@@ -692,10 +716,13 @@ export class BillingWebhookService {
   ): Promise<void> {
     const sub = await this.repo.findSubscriptionById(charge.subscriptionId);
     if (!sub || sub.asaasSubscriptionId) return;
-    if (sub.method !== 'monthly_card') return;
+    // Só o checkout hospedado cria a assinatura fora do nosso controle. Nos métodos
+    // Pix nós a criamos pela API e o id já foi gravado na contratação.
+    if (!usesHostedCheckout(sub.method)) return;
 
     const id =
-      payment.subscription ?? (await this.checkout.resolverAssinatura(charge, sub, 'MONTHLY'));
+      payment.subscription ??
+      (await this.checkout.resolverAssinatura(charge, sub, cycleOf(sub.method)));
     if (!id) {
       await this.alerts.raise('checkout_unresolved', {
         companyId: charge.companyId,
@@ -753,7 +780,7 @@ export class BillingWebhookService {
     }
 
     const now = new Date();
-    const isAnnual = sub.method === 'annual_pix' || sub.method === 'annual_card';
+    const anual = isAnnual(sub.method);
     const aplicaReducao = sub.seatsAtNextRenewal != null;
     // O ciclo novo começa onde o atual termina, não "agora" (R47). Quem renova antes
     // de vencer não pode perder os dias que já pagou — e o mensal também ganha com
@@ -763,7 +790,7 @@ export class BillingWebhookService {
       status: 'active',
       graceUntil: null,
       currentPeriodStart: inicio,
-      currentPeriodEnd: isAnnual ? addYears(inicio, 1) : addMonths(inicio, 1),
+      currentPeriodEnd: anual ? addYears(inicio, 1) : addMonths(inicio, 1),
       // Aplica a redução de assentos agendada para a renovação (R19).
       ...(aplicaReducao
         ? { purchasedSeats: sub.seatsAtNextRenewal as number, seatsAtNextRenewal: null }
@@ -792,6 +819,96 @@ export class BillingWebhookService {
     const { id } = parseExternalReference(payment.externalReference);
     if (id) return this.repo.findSeatAddonById(id);
     return null;
+  }
+
+  /**
+   * Cobrança do ciclo seguinte recém-emitida pelo Asaas: materializa a `BillingCharge`
+   * local **antes** do pagamento, anexa o QR (no Pix) e avisa o cliente.
+   *
+   * É o que torna o mensal no Pix viável. A recorrência Pix não debita sozinha — o
+   * cliente precisa pagar um QR novo a cada ciclo — e ele só consegue fazer isso se a
+   * cobrança aparecer na tela. Vale também para o anual no Pix e para as assinaturas de
+   * assentos, que sofriam do mesmo silêncio.
+   *
+   * Não faz nada no cartão: lá o débito é automático, e uma cobrança "aguardando
+   * confirmação" pendurada o mês inteiro só confundiria quem não precisa agir.
+   */
+  private async onCreated(payment: AsaasPayment): Promise<'processed' | 'ignored'> {
+    // Já conhecemos este pagamento (contratação, ou reentrega do evento) — nada a criar.
+    if (await this.repo.findChargeByAsaasPaymentId(payment.id)) return 'ignored';
+
+    const sub = await this.resolveSubscription(payment);
+    if (!sub) {
+      // Sem assinatura dona não há o que materializar. Não alarma: cobrança avulsa
+      // nossa já nasce com charge, e o que não é nosso já foi recusado antes do inbox.
+      this.logger.debug({ paymentId: payment.id }, 'Cobrança criada sem assinatura nossa');
+      return 'ignored';
+    }
+
+    const charge = await this.chargeForSubscriptionPayment(payment, sub);
+    if (!charge) return 'ignored';
+    if (charge.paymentKind !== 'pix') return 'processed';
+
+    await this.anexarPixDaCobranca(charge, payment);
+    // Só avisa a RENOVAÇÃO. Na contratação o cliente acabou de ver o QR na tela, e o
+    // `PAYMENT_CREATED` pode chegar antes de terminarmos de anexá-lo — avisar aí seria
+    // um e-mail redundante disparado por uma corrida.
+    if (charge.type === 'renewal') await this.avisarCobrancaDisponivel(sub, charge, payment);
+    return 'processed';
+  }
+
+  /**
+   * Anexa o QR do Pix à cobrança local. **Nunca lança** — sem o QR a cobrança continua
+   * válida e o cliente ainda tem o `invoiceUrl`; derrubar o processamento do webhook
+   * por causa da imagem seria trocar um problema pequeno por um grande.
+   */
+  private async anexarPixDaCobranca(charge: BillingCharge, payment: AsaasPayment): Promise<void> {
+    try {
+      const qr = await this.asaas.getPixQrCode(payment.id);
+      await this.repo.updateCharge(charge.id, {
+        pixPayload: qr.payload,
+        pixEncodedImage: qr.encodedImage,
+        pixExpiresAt: qr.expirationDate ? new Date(qr.expirationDate.replace(' ', 'T')) : null,
+        invoiceUrl: payment.invoiceUrl ?? charge.invoiceUrl,
+      });
+    } catch (err: unknown) {
+      this.logger.warn(
+        { chargeId: charge.id, paymentId: payment.id, err },
+        'Não foi possível anexar o QR da cobrança agora (a conciliação resolve)',
+      );
+    }
+  }
+
+  /**
+   * Avisa que há Pix a pagar. Idempotente por `BillingNotice` — o Asaas reentrega
+   * eventos, e mandar o mesmo e-mail duas vezes por ciclo corrói a confiança no aviso.
+   * Best-effort: e-mail que falha não derruba o webhook.
+   */
+  private async avisarCobrancaDisponivel(
+    sub: Subscription,
+    charge: BillingCharge,
+    payment: AsaasPayment,
+  ): Promise<void> {
+    const vencimento = payment.dueDate ? new Date(`${payment.dueDate}T12:00:00`) : new Date();
+    try {
+      await this.repo.createNotice({
+        subscriptionId: sub.id,
+        kind: 'pix_disponivel',
+        anchorAt: vencimento,
+      });
+    } catch (err: unknown) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') return;
+      throw err;
+    }
+    try {
+      const to = await this.repo.findCompanyAdminEmails(sub.companyId);
+      await this.mailer.sendPixChargeAvailableEmail(to, sub.companyId, {
+        amountCents: charge.amountCents,
+        dueDate: vencimento,
+      });
+    } catch (err: unknown) {
+      this.logger.warn({ companyId: sub.companyId, err }, 'Falha ao avisar Pix disponível');
+    }
   }
 
   private async onOverdue(payment: AsaasPayment): Promise<void> {

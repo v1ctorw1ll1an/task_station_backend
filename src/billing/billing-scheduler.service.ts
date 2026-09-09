@@ -15,6 +15,9 @@ import { BillingCheckoutService } from './billing-checkout.service';
 import { BillingRepository } from './billing.repository';
 import { BillingService } from './billing.service';
 import { BillingWebhookService } from './billing-webhook.service';
+import { GRACE_DAYS } from './billing.constants';
+import { annualTotalCents } from './pricing';
+import { paymentKindOf } from './billing-method';
 
 const RECONCILE_AGE_HOURS = 6;
 /** Dias que os dados de uma empresa cancelada ficam guardados antes da exclusão (R43). */
@@ -79,6 +82,7 @@ export class BillingSchedulerService {
     await this.safe(() => this.handleTrials(now), 'trials');
     await this.safe(() => this.handleGrace(now), 'grace');
     await this.safe(() => this.handleAnnual(now), 'annual');
+    await this.safe(() => this.handleSemRecorrencia(now), 'sem-recorrencia');
     await this.safe(() => this.handleExpiredPix(now), 'expired-pix');
     await this.safe(() => this.handleCancellations(now), 'cancellations');
     await this.safe(() => this.reconcile(now), 'reconcile');
@@ -254,29 +258,55 @@ export class BillingSchedulerService {
   }
 
   /**
-   * Vencimento e lembretes do anual **no cartão** — o único que ainda não renova
-   * sozinho (o Asaas não combina assinatura recorrente com parcelamento, e o
-   * parcelado em 12× é o que faz o anual vender).
+   * Aviso prévio da renovação anual (D-15/D-7/D-1), nos dois métodos.
    *
-   * O anual no Pix virou assinatura nativa: o Asaas gera a cobrança do ano seguinte e
-   * o não pagamento chega como `PAYMENT_OVERDUE`, com carência, igual ao mensal.
+   * Deixou de ser varredura de vencimento quando o anual no cartão virou assinatura
+   * nativa do Asaas: os dois anuais renovam sozinhos agora, e a falta de pagamento
+   * chega como `PAYMENT_OVERDUE`, com carência, igual ao mensal. Derrubar por
+   * `currentPeriodEnd` aqui poria em somente-leitura quem tem cobrança em processamento
+   * — quem cuida do anual que venceu sem recorrência é o `handleAnnualSemRecorrencia`.
+   *
+   * O e-mail mudou de sentido junto: não é mais um pedido de recontratação, é o aviso
+   * de que um valor vai sair. Por isso leva quanto e como.
    */
   private async handleAnnual(now: Date): Promise<void> {
     for (const s of await this.repo.findActiveAnnual()) {
-      if (!s.currentPeriodEnd) continue;
-      if (s.currentPeriodEnd < now) {
-        await this.toReadOnly(s.id, s.companyId);
-        await this.notify(s.id, 'readonly', s.currentPeriodEnd, s.companyId, (to) =>
-          this.mailer.sendReadOnlyActivatedEmail(to, s.companyId),
-        );
-      } else {
-        const days = differenceInCalendarDays(s.currentPeriodEnd, now);
-        if (days === 15 || days === 7 || days === 1) {
-          await this.notify(s.id, `annual_d${days}`, s.currentPeriodEnd, s.companyId, (to) =>
-            this.mailer.sendAnnualRenewalReminderEmail(to, s.companyId, days),
-          );
-        }
-      }
+      if (!s.currentPeriodEnd || s.currentPeriodEnd < now) continue;
+      const days = differenceInCalendarDays(s.currentPeriodEnd, now);
+      if (days !== 15 && days !== 7 && days !== 1) continue;
+      await this.notify(s.id, `annual_d${days}`, s.currentPeriodEnd, s.companyId, (to) =>
+        this.mailer.sendAnnualRenewalReminderEmail(to, s.companyId, days, {
+          amountCents: annualTotalCents(s.purchasedSeats),
+          method: paymentKindOf(s.method),
+          renewsAt: s.currentPeriodEnd as Date,
+        }),
+      );
+    }
+  }
+
+  /**
+   * Plano vencido **sem recorrência viva no Asaas** → somente-leitura, em qualquer
+   * método.
+   *
+   * É a rede que sobrou da varredura antiga de vencimento do anual, e não deveria pegar
+   * ninguém: todo plano contratado nasce com uma assinatura no Asaas. Quem chega aqui é
+   * sobra de falha (a assinatura do checkout que não pôde ser vinculada, ou um
+   * cancelamento que derrubou a recorrência sem recriá-la) — e sem esta varredura a
+   * empresa fica ativa para sempre sem nunca mais ser cobrada. Por isso alarma: é
+   * dinheiro parando de entrar em silêncio, não rotina.
+   */
+  private async handleSemRecorrencia(now: Date): Promise<void> {
+    const cutoff = subDays(now, GRACE_DAYS);
+    for (const s of await this.repo.findWithoutRecurrence(cutoff)) {
+      await this.toReadOnly(s.id, s.companyId);
+      await this.alerts.raise('sem_recorrencia', {
+        companyId: s.companyId,
+        subscriptionId: s.id,
+        currentPeriodEnd: s.currentPeriodEnd,
+      });
+      await this.notify(s.id, 'readonly', s.currentPeriodEnd as Date, s.companyId, (to) =>
+        this.mailer.sendReadOnlyActivatedEmail(to, s.companyId),
+      );
     }
   }
 

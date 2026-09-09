@@ -23,6 +23,7 @@ import { ListChargesQueryDto } from './dto/list-charges-query.dto';
 import { BuySeatsDto, ReduceSeatsDto, SeatPreviewQueryDto } from './dto/seats.dto';
 import { SubscribeAnnualCardDto } from './dto/subscribe-annual-card.dto';
 import { SubscribeAnnualPixDto } from './dto/subscribe-annual-pix.dto';
+import { SubscribeMonthlyPixDto } from './dto/subscribe-monthly-pix.dto';
 import { SubscribeMonthlyDto } from './dto/subscribe-monthly.dto';
 import { UpdateBillingAddressDto } from './dto/update-billing-address.dto';
 
@@ -96,10 +97,20 @@ export class BillingController {
   @Post('assinar/mensal')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  @ApiOperation({ summary: 'Assinar o plano mensal — devolve o link do checkout do Asaas' })
+  @ApiOperation({
+    summary: 'Assinar o plano mensal no cartão — devolve o link do checkout do Asaas',
+  })
   @ApiResponse({ status: 200, description: '{ checkoutUrl, expiresAt, status }' })
   subscribeMonthly(@Param('companyId') companyId: string, @Body() dto: SubscribeMonthlyDto) {
     return this.billingService.subscribeMonthly(companyId, dto);
+  }
+
+  @Post('assinar/mensal-pix')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Assinar o plano mensal via Pix (assinatura mensal + QR Code)' })
+  subscribeMonthlyPix(@Param('companyId') companyId: string, @Body() dto: SubscribeMonthlyPixDto) {
+    return this.billingService.subscribeMonthlyPix(companyId, dto);
   }
 
   @Post('assinar/anual-pix')
@@ -113,7 +124,9 @@ export class BillingController {
   @Post('assinar/anual-cartao')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  @ApiOperation({ summary: 'Assinar o plano anual no cartão (até 12×) — link do checkout' })
+  @ApiOperation({
+    summary: 'Assinar o plano anual no cartão (pagamento único, renova sozinho) — link do checkout',
+  })
   @ApiResponse({ status: 200, description: '{ checkoutUrl, expiresAt, status }' })
   subscribeAnnualCard(@Param('companyId') companyId: string, @Body() dto: SubscribeAnnualCardDto) {
     return this.billingService.subscribeAnnualCard(companyId, dto);
@@ -197,7 +210,7 @@ export class BillingController {
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @ApiOperation({
-    summary: 'Trocar o cartão da assinatura mensal — devolve o link do checkout do Asaas',
+    summary: 'Trocar o cartão da assinatura — devolve o link do checkout do Asaas',
   })
   @ApiResponse({ status: 200, description: '{ checkoutUrl, expiresAt, status }' })
   trocarCartao(@Param('companyId') companyId: string) {
@@ -223,7 +236,7 @@ export class BillingController {
   @ApiOperation({ summary: 'Desfazer um cancelamento agendado (reativar a assinatura)' })
   @ApiResponse({
     status: 200,
-    description: '{ checkoutUrl, status } — no mensal o cartão é reinformado no Asaas',
+    description: '{ checkoutUrl, status } — nos planos de cartão, o cartão é reinformado no Asaas',
   })
   reactivate(@Param('companyId') companyId: string) {
     return this.billingService.reactivate(companyId);

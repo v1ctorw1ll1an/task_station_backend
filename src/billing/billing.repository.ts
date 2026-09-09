@@ -772,14 +772,53 @@ export class BillingRepository {
   }
 
   /**
-   * Anuais que **não renovam sozinhos** — só o cartão. O anual no Pix virou assinatura
-   * nativa do Asaas: ele gera a cobrança do ano seguinte, e a falta de pagamento chega
-   * como `PAYMENT_OVERDUE` (carência, igual ao mensal). Varrer os dois aqui poria em
-   * somente-leitura um cliente cuja renovação está a caminho.
+   * Anuais ativos, para o **aviso prévio** de renovação (D-15/D-7/D-1). Os dois métodos
+   * entram: hoje ambos são assinatura nativa do Asaas e renovam sozinhos, então o
+   * e-mail deixou de ser "renove" e virou "vamos debitar".
+   *
+   * Não é mais uma varredura de vencimento — quem trata a falta de pagamento é o
+   * `PAYMENT_OVERDUE` (carência, igual ao mensal). Derrubar por `currentPeriodEnd`
+   * aqui poria em somente-leitura um cliente cuja cobrança está em processamento.
+   *
+   * `method` e `purchasedSeats` vêm para o e-mail poder dizer quanto e como será
+   * cobrado — aviso de débito sem o valor não serve para o cliente decidir nada.
    */
   findActiveAnnual() {
     return this.prisma.subscription.findMany({
-      where: { status: 'active', method: 'annual_card' },
+      where: { status: 'active', method: { in: ['annual_pix', 'annual_card'] } },
+      select: {
+        id: true,
+        companyId: true,
+        currentPeriodEnd: true,
+        method: true,
+        purchasedSeats: true,
+      },
+    });
+  }
+
+  /**
+   * Planos que venceram **sem recorrência viva no Asaas**, em qualquer método.
+   *
+   * Não deveria existir ninguém aqui: todo plano contratado nasce com uma assinatura no
+   * Asaas. Quem cai nesta query é sobra de falha — o `checkout_unresolved`, em que a
+   * assinatura criada pelo checkout não pôde ser vinculada sem ambiguidade, e as
+   * vítimas do cancelamento que derrubava a recorrência sem recriá-la. Sem esta
+   * varredura essas empresas ficam `active` para sempre sem nunca mais serem cobradas.
+   *
+   * Vale para os quatro métodos: era uma rede só do anual porque só o anual tinha
+   * histórico de perder a recorrência, mas o buraco nunca foi de cadência.
+   *
+   * O `cutoff` dá folga sobre o vencimento: renovação em processamento não pode ser
+   * confundida com ausência de recorrência.
+   */
+  findWithoutRecurrence(cutoff: Date) {
+    return this.prisma.subscription.findMany({
+      where: {
+        status: 'active',
+        method: { not: null },
+        asaasSubscriptionId: null,
+        currentPeriodEnd: { lt: cutoff },
+      },
       select: { id: true, companyId: true, currentPeriodEnd: true },
     });
   }

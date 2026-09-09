@@ -452,7 +452,19 @@ function makeRepo(db: FakeDb): BillingRepository {
     findPastDue: () => Promise.resolve(db.sub.status === 'past_due' ? [{ ...db.sub }] : []),
     findActiveAnnual: () =>
       Promise.resolve(
-        db.sub.status === 'active' && db.sub.method === 'annual_card' ? [{ ...db.sub }] : [],
+        db.sub.status === 'active' && ['annual_pix', 'annual_card'].includes(String(db.sub.method))
+          ? [{ ...db.sub }]
+          : [],
+      ),
+    findWithoutRecurrence: (cutoff: Date) =>
+      Promise.resolve(
+        db.sub.status === 'active' &&
+          db.sub.method != null &&
+          db.sub.asaasSubscriptionId == null &&
+          db.sub.currentPeriodEnd != null &&
+          (db.sub.currentPeriodEnd as Date) < cutoff
+          ? [{ ...db.sub }]
+          : [],
       ),
     findCancelDue: (now: Date) =>
       Promise.resolve(
@@ -786,11 +798,9 @@ function makeHarness() {
   const fakeAsaas = new FakeAsaas();
   const asaas = fakeAsaas.client();
   const config = {
-    // Taxa de juros ZERO: parcelar não encarece (R36/R45). É o valor de produção.
     get: (k: string, d?: string) =>
       ({
         BILLING_ENABLED: 'true',
-        BILLING_ANNUAL_INTEREST_MONTHLY: '0',
         FRONTEND_URL: 'https://app.taskdy.test',
       })[k] ?? d,
   } as unknown as ConfigService;
@@ -802,6 +812,7 @@ function makeHarness() {
     sendTrialEndedEmail: jest.fn().mockResolvedValue(undefined),
     sendReadOnlyActivatedEmail: jest.fn().mockResolvedValue(undefined),
     sendAnnualRenewalReminderEmail: jest.fn().mockResolvedValue(undefined),
+    sendPixChargeAvailableEmail: jest.fn().mockResolvedValue(undefined),
     sendBillingOpsAlert: jest.fn().mockResolvedValue(undefined),
   } as unknown as jest.Mocked<MailerService>;
   const metrics = {
@@ -1542,6 +1553,159 @@ describe('Cenários de cobrança ao longo do tempo', () => {
 
   // ── Anual ────────────────────────────────────────────────────────────────
 
+  describe('plano mensal no Pix', () => {
+    it('contrata, paga o QR e fica ativa por um mês', async () => {
+      const h = makeHarness();
+      startTrial(h);
+      await h.service.subscribeMonthlyPix(COMPANY);
+
+      // O QR tem de estar na tela já na contratação — é como o cliente paga.
+      const antes = await h.service.getStatus(COMPANY);
+      expect(antes.pendingPix?.payload).toBeTruthy();
+      expect(h.sub().method).toBe('monthly_pix');
+      expect(h.sub().asaasSubscriptionId).toBeTruthy();
+
+      await h.pay(h.asaas.last().id);
+      expect(h.sub().status).toBe('active');
+      await expect(h.blocked()).resolves.toBe(false);
+      // Um mês, não um ano: a cadência sai do método.
+      expect((h.sub().currentPeriodEnd as Date).getTime()).toBe(addMonths(new Date(), 1).getTime());
+    });
+
+    it('a cobrança do mês seguinte aparece com QR e avisa o cliente ANTES de vencer', async () => {
+      // O ponto que decide a forma de pagamento inteira. A recorrência em Pix não
+      // debita sozinha: se a cobrança nova não chegar à tela, o cliente só descobre
+      // que devia pagar quando é bloqueado.
+      const h = makeHarness();
+      startTrial(h);
+      await h.service.subscribeMonthlyPix(COMPANY);
+      await h.pay(h.asaas.last().id);
+
+      h.advanceDays(30);
+      const renovacao = h.renewalPayment(); // o Asaas emite a cobrança do ciclo novo
+      await h.deliver(renovacao.id, 'PAYMENT_CREATED');
+
+      const status = await h.service.getStatus(COMPANY);
+      expect(status.pendingPix?.payload).toBeTruthy();
+      expect(status.pendingPix?.amountCents).toBe(4990);
+      expect(h.mailer.sendPixChargeAvailableEmail).toHaveBeenCalledTimes(1);
+      // Ainda ativa: a cobrança existe, mas nada venceu.
+      expect(h.sub().status).toBe('active');
+    });
+
+    it('o mesmo evento reentregue não manda o aviso duas vezes', async () => {
+      const h = makeHarness();
+      startTrial(h);
+      await h.service.subscribeMonthlyPix(COMPANY);
+      await h.pay(h.asaas.last().id);
+
+      h.advanceDays(30);
+      const renovacao = h.renewalPayment();
+      await h.deliver(renovacao.id, 'PAYMENT_CREATED', 'evt_dup_1');
+      await h.deliver(renovacao.id, 'PAYMENT_CREATED', 'evt_dup_2');
+
+      expect(h.mailer.sendPixChargeAvailableEmail).toHaveBeenCalledTimes(1);
+    });
+
+    it('renova sozinho: pagar o Pix do mês seguinte estende o ciclo', async () => {
+      const h = makeHarness();
+      startTrial(h);
+      await h.service.subscribeMonthlyPix(COMPANY);
+      await h.pay(h.asaas.last().id);
+      const fimDoPrimeiroCiclo = h.sub().currentPeriodEnd as Date;
+
+      h.advanceDays(31);
+      await h.pay(h.renewalPayment().id);
+
+      expect(h.sub().status).toBe('active');
+      expect((h.sub().currentPeriodEnd as Date).getTime()).toBeGreaterThan(
+        fimDoPrimeiroCiclo.getTime(),
+      );
+      await expect(h.blocked()).resolves.toBe(false);
+    });
+
+    it('não pagar vira carência, e só depois dela bloqueia', async () => {
+      const h = makeHarness();
+      startTrial(h);
+      await h.service.subscribeMonthlyPix(COMPANY);
+      await h.pay(h.asaas.last().id);
+
+      h.advanceDays(31);
+      const renovacao = h.renewalPayment();
+      h.asaas.setStatus(renovacao.id, 'OVERDUE');
+      await h.deliver(renovacao.id, 'PAYMENT_OVERDUE');
+      expect(h.sub().status).toBe('past_due');
+      await expect(h.blocked()).resolves.toBe(false);
+
+      h.advanceDays(4);
+      await h.tick();
+      expect(h.sub().status).toBe('readonly');
+      await expect(h.blocked()).resolves.toBe(true);
+    });
+
+    it('a renovação é gravada como Pix, não como cartão', async () => {
+      // `paymentKind` saía de um ternário que só conhecia o anual-Pix; todo o resto
+      // virava `credit_card`, contaminando histórico, rótulo e a regra de reaproveitar
+      // cobrança em aberto.
+      const h = makeHarness();
+      startTrial(h);
+      await h.service.subscribeMonthlyPix(COMPANY);
+      await h.pay(h.asaas.last().id);
+
+      h.advanceDays(31);
+      await h.pay(h.renewalPayment().id);
+
+      const renovacoes = h.db.charges.filter((c) => c.type === 'renewal');
+      expect(renovacoes.length).toBeGreaterThan(0);
+      expect(renovacoes.every((c) => c.paymentKind === 'pix')).toBe(true);
+    });
+
+    it('assentos têm paridade com o cartão: preço mensal e recorrência reajustada', async () => {
+      // Sem o eixo separado, o mensal-Pix caía no ramo anual e o assento custava
+      // R$179,10/ano em vez de R$19,90 — e a mensalidade nunca subia.
+      const h = makeHarness();
+      startTrial(h);
+      await h.service.subscribeMonthlyPix(COMPANY);
+      await h.pay(h.asaas.last().id);
+      const asub = h.sub().asaasSubscriptionId as string;
+
+      await h.service.buySeats(COMPANY, { quantity: 1, paymentKind: 'pix' });
+      const cobranca = h.db.charges.find((c) => c.type === 'seat');
+      expect(cobranca?.amountCents).toBe(1990);
+
+      await h.pay(cobranca?.asaasPaymentId as string);
+      expect(h.sub().purchasedSeats).toBe(2);
+      // 2 assentos = 49,90 + 19,90 = 69,80
+      expect(h.asaas.subscriptions.find((s) => s.id === asub)?.value).toBe(69.8);
+    });
+
+    it('reduzir usuários existe no mensal em Pix', async () => {
+      const h = makeHarness();
+      startTrial(h);
+      await h.service.subscribeMonthlyPix(COMPANY, { seats: 3 });
+      await h.pay(h.asaas.last().id);
+
+      await expect(
+        h.service.reduceSeats(COMPANY, { quantity: 1, userIds: [] }),
+      ).resolves.toBeDefined();
+      expect(h.sub().seatsAtNextRenewal).toBe(2);
+    });
+
+    it('cancelar derruba a recorrência na hora — a próxima cobrança sai antes do fim do ciclo', async () => {
+      const h = makeHarness();
+      startTrial(h);
+      await h.service.subscribeMonthlyPix(COMPANY);
+      await h.pay(h.asaas.last().id);
+      const asub = h.sub().asaasSubscriptionId as string;
+
+      await h.service.cancel(COMPANY);
+
+      expect(h.asaas.subscriptions.find((s) => s.id === asub)?.status).toBe('DELETED');
+      expect(h.sub().asaasSubscriptionId).toBeNull();
+      await expect(h.blocked()).resolves.toBe(false); // acesso até o fim do ciclo pago
+    });
+  });
+
   describe('plano anual', () => {
     it('paga o ano, atravessa 11 meses ativa e só bloqueia depois do vencimento', async () => {
       const h = makeHarness();
@@ -1571,10 +1735,10 @@ describe('Cenários de cobrança ao longo do tempo', () => {
       await expect(h.blocked()).resolves.toBe(true);
     });
 
-    it('anual no cartão (compra única) é lembrado em D-15, D-7 e D-1 sem repetir aviso', async () => {
+    it('anual no cartão avisa em D-15, D-7 e D-1 antes de debitar, sem repetir aviso', async () => {
       const h = makeHarness();
       startTrial(h);
-      await h.service.subscribeAnnualCard(COMPANY, { installments: 1 });
+      await h.service.subscribeAnnualCard(COMPANY, {});
       await h.pagarCheckoutAberto();
 
       for (const dias of [350, 8, 6]) {
@@ -1603,6 +1767,71 @@ describe('Cenários de cobrança ao longo do tempo', () => {
         addYears(fimDoPrimeiroAno, 1).getTime() - 86_400_000 * 2,
       );
       await expect(h.blocked()).resolves.toBe(false);
+    });
+
+    it('anual no cartão renova sozinho: um ano depois, a cobrança do Asaas estende o ciclo', async () => {
+      const h = makeHarness();
+      startTrial(h);
+      await h.service.subscribeAnnualCard(COMPANY, {});
+      await h.pagarCheckoutAberto();
+
+      // O vínculo com a assinatura do Asaas é o que torna a renovação possível: sem ele
+      // o pagamento do ano 2 não seria reconhecido e o cliente pagaria para continuar
+      // bloqueado.
+      expect(h.sub().asaasSubscriptionId).toBeTruthy();
+      const fimDoPrimeiroAno = h.sub().currentPeriodEnd as Date;
+
+      // Sem recontratar nada: o Asaas cobra o cartão guardado e nos avisa.
+      h.advanceDays(366);
+      await h.pay(h.renewalPayment().id);
+
+      expect(h.sub().status).toBe('active');
+      expect((h.sub().currentPeriodEnd as Date).getTime()).toBeGreaterThan(
+        addYears(fimDoPrimeiroAno, 1).getTime() - 86_400_000 * 2,
+      );
+      await expect(h.blocked()).resolves.toBe(false);
+    });
+
+    it('anual no cartão: renovação não paga vira carência, não bloqueio imediato', async () => {
+      const h = makeHarness();
+      startTrial(h);
+      await h.service.subscribeAnnualCard(COMPANY, {});
+      await h.pagarCheckoutAberto();
+
+      // Passou do vencimento com a cobrança em processamento: o cron não pode derrubar.
+      h.advanceDays(366);
+      await h.tick();
+      expect(h.sub().status).toBe('active');
+
+      const renovacao = h.renewalPayment();
+      h.asaas.setStatus(renovacao.id, 'OVERDUE');
+      await h.deliver(renovacao.id, 'PAYMENT_OVERDUE');
+      expect(h.sub().status).toBe('past_due');
+      await expect(h.blocked()).resolves.toBe(false); // carência não bloqueia
+
+      h.advanceDays(4);
+      await h.tick();
+      expect(h.sub().status).toBe('readonly');
+      await expect(h.blocked()).resolves.toBe(true);
+    });
+
+    it('anual no cartão: trocar de plano não deixa duas recorrências cobrando', async () => {
+      // Caminho novo: antes o anual-cartão não tinha assinatura no Asaas, então não havia
+      // o que derrubar. Agora tem — e duas assinaturas anuais vivas cobram em dobro.
+      const h = makeHarness();
+      startTrial(h);
+      await h.service.subscribeAnnualCard(COMPANY, {});
+      await h.pagarCheckoutAberto();
+      const primeira = h.sub().asaasSubscriptionId as string;
+
+      // Renova antecipado, ainda dentro do ciclo pago (R47).
+      h.advanceDays(200);
+      await h.service.subscribeAnnualCard(COMPANY, {});
+      await h.pagarCheckoutAberto();
+
+      expect(h.asaas.subscriptions.find((s) => s.id === primeira)?.status).toBe('DELETED');
+      expect(h.asaas.subscriptions.filter((s) => s.status === 'ACTIVE')).toHaveLength(1);
+      expect(h.sub().asaasSubscriptionId).not.toBe(primeira);
     });
 
     it('renova ANTES de vencer sem perder os dias já pagos (R47)', async () => {
@@ -1693,6 +1922,82 @@ describe('Cenários de cobrança ao longo do tempo', () => {
 
       expect(h.asaas.subscriptions.find((s) => s.id === asub)?.status).toBe('DELETED');
       expect(h.sub().asaasSubscriptionId).toBeNull();
+    });
+
+    // ── Anual: a recorrência sobrevive ao pedido de cancelamento ─────────────
+    //
+    // No mensal a próxima cobrança sairia antes do fim do ciclo pago, então ela é
+    // derrubada na hora. No anual a próxima está a um ano — depois do fim do ciclo —
+    // e derrubá-la agora foi um bug real: `reactivate` não a recriava, e a empresa
+    // voltava a `active` sem nada cobrando, ativa de graça para sempre.
+
+    it.each(['annual_pix', 'annual_card'] as const)(
+      '%s: cancelar mantém a recorrência viva; ela só morre no fim do ciclo',
+      async (metodo) => {
+        const h = makeHarness();
+        startTrial(h);
+        if (metodo === 'annual_pix') {
+          await h.service.subscribeAnnualPix(COMPANY);
+          await h.pay(h.asaas.last().id);
+        } else {
+          await h.service.subscribeAnnualCard(COMPANY, {});
+          await h.pagarCheckoutAberto();
+        }
+        const asub = h.sub().asaasSubscriptionId as string;
+        expect(asub).toBeTruthy();
+
+        await h.service.cancel(COMPANY);
+        expect(h.sub().cancelAtPeriodEnd).toBe(true);
+        // Ainda de pé: é o que permite desfazer o cancelamento sem cobrar nada.
+        expect(h.asaas.subscriptions.find((s) => s.id === asub)?.status).toBe('ACTIVE');
+        expect(h.sub().asaasSubscriptionId).toBe(asub);
+
+        // Sem reativar, o cron a derruba ao efetivar o cancelamento.
+        h.advanceDays(370);
+        await h.tick();
+        expect(h.sub().status).toBe('canceled');
+        expect(h.asaas.subscriptions.find((s) => s.id === asub)?.status).toBe('DELETED');
+      },
+    );
+
+    it('anual: reativar é desfazer o pedido — a mesma recorrência continua cobrando', async () => {
+      const h = makeHarness();
+      startTrial(h);
+      await h.service.subscribeAnnualCard(COMPANY, {});
+      await h.pagarCheckoutAberto();
+      const asub = h.sub().asaasSubscriptionId as string;
+
+      await h.service.cancel(COMPANY);
+      const r = await h.service.reactivate(COMPANY);
+
+      // Nada de checkout novo: não há cartão a reinformar, a assinatura nunca morreu.
+      expect(r.checkoutUrl).toBeNull();
+      expect(h.sub().cancelAtPeriodEnd).toBe(false);
+      expect(h.sub().asaasSubscriptionId).toBe(asub);
+
+      // E ela realmente cobra: um ano depois a renovação chega e estende o ciclo.
+      h.advanceDays(366);
+      await h.pay(h.renewalPayment().id);
+      expect(h.sub().status).toBe('active');
+      await expect(h.blocked()).resolves.toBe(false);
+    });
+
+    it('anual reativado nunca fica ativo sem recorrência — o cron o pegaria', async () => {
+      // A trava do bug: se algum caminho voltar a zerar a recorrência do anual, esta
+      // varredura derruba a empresa em vez de deixá-la ativa de graça para sempre.
+      const h = makeHarness();
+      startTrial(h);
+      await h.service.subscribeAnnualPix(COMPANY);
+      await h.pay(h.asaas.last().id);
+
+      await h.service.cancel(COMPANY);
+      await h.service.reactivate(COMPANY);
+      expect(h.sub().asaasSubscriptionId).not.toBeNull();
+
+      h.advanceDays(370);
+      await h.tick();
+      // Com recorrência viva, quem trata é o fluxo de atraso — não esta varredura.
+      expect(h.sub().status).not.toBe('readonly');
     });
 
     it('quem cancelou e voltou NÃO é cancelado de novo no fim do ciclo novo (C1)', async () => {

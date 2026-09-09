@@ -20,6 +20,13 @@ export const BILLING_ALERTS = {
   /** Mesmo problema, do lado das assinaturas de assentos anuais. */
   addon_subscription_orphan: 'Assentos ativados sem assinatura identificada no provedor',
   /**
+   * Plano que passou do vencimento sem nenhuma recorrência viva no Asaas. Não deveria
+   * acontecer — todo plano contratado nasce com uma assinatura — e enquanto ninguém
+   * olha a empresa fica ativa sem nunca mais ser cobrada. É receita parando de entrar
+   * em silêncio, por isso alarma além de virar somente-leitura.
+   */
+  sem_recorrencia: 'Plano vencido sem recorrência no provedor',
+  /**
    * A conta da TaskDY no Asaas está bloqueada ou com recurso desabilitado (cadastro
    * pendente, documento faltando, Pix/checkout não liberado). **Nenhum cliente
    * consegue pagar** por esse caminho até alguém resolver — é o alerta mais urgente

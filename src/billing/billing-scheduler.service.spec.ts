@@ -21,6 +21,7 @@ function makeRepo(
     findTrials: jest.fn().mockResolvedValue([]),
     findPastDue: jest.fn().mockResolvedValue([]),
     findActiveAnnual: jest.fn().mockResolvedValue([]),
+    findWithoutRecurrence: jest.fn().mockResolvedValue([]),
     findCancelDue: jest.fn().mockResolvedValue([]),
     findExpiredCheckoutCharges: jest.fn().mockResolvedValue([]),
     findUnboundCheckoutCharges: jest.fn().mockResolvedValue([]),
@@ -190,18 +191,68 @@ describe('BillingSchedulerService', () => {
     expect(mailer.sendReadOnlyActivatedEmail).toHaveBeenCalledWith(['admin@co.com'], 'c2');
   });
 
-  it('anual vencido → readonly; anual a 7 dias → lembrete', async () => {
+  it('anual a 7 dias → aviso prévio com valor e forma de pagamento', async () => {
     const repo = makeRepo({
       findActiveAnnual: jest.fn().mockResolvedValue([
-        { id: 'a1', companyId: 'ca', currentPeriodEnd: new Date('2026-07-10T00:00:00Z') }, // vencido
-        { id: 'a2', companyId: 'cb', currentPeriodEnd: new Date('2026-07-29T12:00:00Z') }, // 7 dias
+        {
+          id: 'a2',
+          companyId: 'cb',
+          currentPeriodEnd: new Date('2026-07-29T12:00:00Z'), // 7 dias
+          method: 'annual_card',
+          purchasedSeats: 1,
+        },
       ]),
     });
     const { service, mailer } = make(repo);
     await service.run(NOW);
 
-    expect(repo.updateSubscription).toHaveBeenCalledWith('a1', { status: 'readonly' });
-    expect(mailer.sendAnnualRenewalReminderEmail).toHaveBeenCalledWith(['admin@co.com'], 'cb', 7);
+    expect(mailer.sendAnnualRenewalReminderEmail).toHaveBeenCalledWith(['admin@co.com'], 'cb', 7, {
+      amountCents: 44910,
+      method: 'credit_card',
+      renewsAt: new Date('2026-07-29T12:00:00Z'),
+    });
+  });
+
+  it('anual vencido NÃO vira readonly enquanto a recorrência estiver viva', async () => {
+    // A renovação pode estar em processamento no Asaas. Quem trata a falta de pagamento
+    // é o PAYMENT_OVERDUE, com carência — derrubar aqui bloquearia quem acabou de pagar.
+    const repo = makeRepo({
+      findActiveAnnual: jest.fn().mockResolvedValue([
+        {
+          id: 'a1',
+          companyId: 'ca',
+          currentPeriodEnd: new Date('2026-07-10T00:00:00Z'), // vencido
+          method: 'annual_card',
+          purchasedSeats: 1,
+        },
+      ]),
+    });
+    const { service, mailer } = make(repo);
+    await service.run(NOW);
+
+    expect(repo.updateSubscription).not.toHaveBeenCalledWith('a1', { status: 'readonly' });
+    expect(mailer.sendAnnualRenewalReminderEmail).not.toHaveBeenCalled();
+  });
+
+  it('anual vencido SEM recorrência no Asaas → readonly e alerta', async () => {
+    // Não deveria existir ninguém aqui; quem cai é sobra de falha. Sem esta varredura a
+    // empresa fica ativa para sempre sem nunca mais ser cobrada.
+    const repo = makeRepo({
+      findWithoutRecurrence: jest
+        .fn()
+        .mockResolvedValue([
+          { id: 'a3', companyId: 'cc', currentPeriodEnd: new Date('2026-07-01T00:00:00Z') },
+        ]),
+    });
+    const { service, mailer } = make(repo);
+    await service.run(NOW);
+
+    expect(repo.updateSubscription).toHaveBeenCalledWith('a3', { status: 'readonly' });
+    expect(alerts.raise).toHaveBeenCalledWith(
+      'sem_recorrencia',
+      expect.objectContaining({ companyId: 'cc', subscriptionId: 'a3' }),
+    );
+    expect(mailer.sendReadOnlyActivatedEmail).toHaveBeenCalledWith(['admin@co.com'], 'cc');
   });
 
   it('Pix pendente vencido → cobrança expira', async () => {

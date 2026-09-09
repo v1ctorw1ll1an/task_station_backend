@@ -413,18 +413,76 @@ export class MailerService {
     );
   }
 
+  /**
+   * "Sua cobrança está disponível" — o aviso que faz a recorrência em Pix funcionar.
+   *
+   * Diferente do cartão, o Pix **não debita sozinho**: a cada ciclo o Asaas emite uma
+   * cobrança nova e o cliente precisa pagar o QR. Sem este e-mail ele não tem como
+   * saber que a fatura saiu, e descobriria só ao ser bloqueado — que é a forma mais
+   * cara de perder um cliente que queria continuar pagando.
+   */
+  async sendPixChargeAvailableEmail(
+    to: string[],
+    companyId: string,
+    cobranca: { amountCents: number; dueDate: Date },
+  ): Promise<void> {
+    const url = this.billingUrl(companyId);
+    const valor = new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+    }).format(cobranca.amountCents / 100);
+    const vencimento = new Intl.DateTimeFormat('pt-BR', {
+      dateStyle: 'long',
+      timeZone: 'America/Sao_Paulo',
+    }).format(cobranca.dueDate);
+
+    await this.sendBilling(
+      to,
+      `Sua cobrança do TaskDY está disponível — ${valor}`,
+      `<p>A cobrança do seu próximo ciclo já pode ser paga: <strong>${valor}</strong>,
+          com vencimento em <strong>${vencimento}</strong>.</p>
+       <p>O QR Code e o copia-e-cola estão na tela de cobrança.</p>
+       <p><a href="${url}">Pagar agora</a></p>`,
+      `Sua cobrança do TaskDY (${valor}) vence em ${vencimento}. Pague em: ${url}`,
+    );
+  }
+
+  /**
+   * Aviso prévio da renovação anual (D-15/D-7/D-1).
+   *
+   * Não é mais um pedido de recontratação: os dois planos anuais renovam sozinhos, e
+   * este e-mail é o único momento em que o cliente sabe, **antes**, que uma quantia
+   * dessas vai sair. Por isso ele diz quanto, como e quando, e oferece as duas saídas
+   * — cancelar ou mudar a quantidade de usuários — enquanto ainda dá tempo. Um débito
+   * anual sem aviso é o caminho curto para contestação e chargeback.
+   */
   async sendAnnualRenewalReminderEmail(
     to: string[],
     companyId: string,
     daysLeft: number,
+    cobranca: { amountCents: number; method: 'pix' | 'credit_card'; renewsAt: Date },
   ): Promise<void> {
     const url = this.billingUrl(companyId);
+    const valor = new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+    }).format(cobranca.amountCents / 100);
+    const data = new Intl.DateTimeFormat('pt-BR', {
+      dateStyle: 'long',
+      timeZone: 'America/Sao_Paulo',
+    }).format(cobranca.renewsAt);
+    const forma =
+      cobranca.method === 'pix' ? 'via Pix (você recebe o QR para pagar)' : 'no seu cartão';
+
     await this.sendBilling(
       to,
-      `Sua assinatura anual do TaskDY vence em ${daysLeft} dia(s)`,
-      `<p>Sua assinatura anual vence em <strong>${daysLeft} dia(s)</strong>. Renove para manter o acesso.</p>
-       <p><a href="${url}">Renovar</a></p>`,
-      `Sua assinatura anual vence em ${daysLeft} dia(s). Renove em: ${url}`,
+      `Sua assinatura anual do TaskDY renova em ${daysLeft} dia(s)`,
+      `<p>Sua assinatura anual renova automaticamente em <strong>${daysLeft} dia(s)</strong>.</p>
+       <p>Serão cobrados <strong>${valor}</strong> ${forma}, em <strong>${data}</strong>.</p>
+       <p>Não precisa fazer nada para continuar. Se quiser <strong>cancelar</strong> ou
+          <strong>mudar a quantidade de usuários</strong>, faça até ${data}.</p>
+       <p><a href="${url}">Ver assinatura</a></p>`,
+      `Sua assinatura anual renova em ${daysLeft} dia(s): ${valor} ${forma}, em ${data}. Para cancelar ou mudar a quantidade de usuários, acesse ${url}`,
     );
   }
 

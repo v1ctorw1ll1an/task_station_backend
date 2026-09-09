@@ -7,6 +7,7 @@ import { BillingAccessService } from './billing-access.service';
 import { BillingRepository } from './billing.repository';
 import { BillingService } from './billing.service';
 import { BillingWebhookService } from './billing-webhook.service';
+import { isAnnual, isMonthly } from './billing-method';
 import {
   AdjustSeatsDto,
   CancelSubscriptionDto,
@@ -73,7 +74,7 @@ export class SuperadminBillingService {
     let inadimplentes = 0;
     for (const g of grupos) {
       const qtd = g._count._all;
-      const anual = g.method === 'annual_pix' || g.method === 'annual_card';
+      const anual = isAnnual(g.method);
       // O anual entra normalizado: 1/12 do ano, para comparar com o mensal.
       const porAssinatura = anual
         ? Math.round(annualTotalCents(g.purchasedSeats) / 12)
@@ -104,10 +105,9 @@ export class SuperadminBillingService {
         method: r.method,
         currentPeriodEnd: r.currentPeriodEnd,
         cancelAtPeriodEnd: r.cancelAtPeriodEnd,
-        valorCents:
-          r.method === 'annual_pix' || r.method === 'annual_card'
-            ? annualTotalCents(r.purchasedSeats)
-            : monthlyTotalCents(r.purchasedSeats),
+        valorCents: isAnnual(r.method)
+          ? annualTotalCents(r.purchasedSeats)
+          : monthlyTotalCents(r.purchasedSeats),
       })),
     };
   }
@@ -291,7 +291,7 @@ export class SuperadminBillingService {
     await this.repo.updateSubscription(sub.id, { purchasedSeats: dto.total });
     // O que a empresa paga acompanha os assentos (C4): sem isto o mensal seguiria
     // cobrando o valor antigo para sempre — a menos/mais do que o devido.
-    if (sub.method === 'monthly_card' && sub.asaasSubscriptionId) {
+    if (isMonthly(sub.method) && sub.asaasSubscriptionId) {
       try {
         await this.asaas.updateSubscriptionValue(
           sub.asaasSubscriptionId,
