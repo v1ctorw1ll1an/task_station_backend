@@ -16,7 +16,7 @@ sudo pacman -S k6                # Arch
 
 # 2. roda em ordem crescente — sempre comece pelo smoke
 cd backend/scripts/loadtest
-BASE_URL=http://hml.taskdy.com/api/v1 ./run-all.sh smoke
+BASE_URL=http://hml.taskdy.com.br/api/v1 ./run-all.sh smoke
 ./run-all.sh load
 ./run-all.sh stress
 ./run-all.sh spike
@@ -135,11 +135,11 @@ desabilitada por engano.
 ## Sem o orquestrador (uso direto do k6)
 
 ```bash
-k6 run -e BASE_URL=https://hml.taskdy.com/api/v1 01-smoke.js
+k6 run -e BASE_URL=https://hml.taskdy.com.br/api/v1 01-smoke.js
 
 # Com mais variáveis:
 k6 run \
-  -e BASE_URL=https://hml.taskdy.com/api/v1 \
+  -e BASE_URL=https://hml.taskdy.com.br/api/v1 \
   -e EMAIL=outro@admin.com \
   -e PASSWORD=senha-do-outro \
   03-stress.js

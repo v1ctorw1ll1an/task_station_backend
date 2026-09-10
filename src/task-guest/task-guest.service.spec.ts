@@ -827,7 +827,7 @@ describe('TaskGuestService.buildGuestNotifyUrl', () => {
     const result = await service.buildGuestNotifyUrl('task-1', 'g1', ['h1']);
     const text = new URL(result.whatsappUrl).searchParams.get('text')!;
     const linkIdx = text.indexOf(result.publicUrl);
-    const ctaIdx = text.indexOf('taskstation.manyflux');
+    const ctaIdx = text.indexOf('https://taskdy.com.br');
     expect(linkIdx).toBeGreaterThan(-1);
     expect(ctaIdx).toBeGreaterThan(-1);
     expect(linkIdx).toBeLessThan(ctaIdx);
@@ -839,7 +839,7 @@ describe('TaskGuestService.buildGuestNotifyUrl', () => {
     const { service } = makeService(repo);
     const result = await service.buildGuestNotifyUrl('task-1', 'g1', ['h1']);
     const text = new URL(result.whatsappUrl).searchParams.get('text')!;
-    expect(text).toContain('https://taskstation.manyflux.com.br');
+    expect(text).toContain('https://taskdy.com.br');
     expect(text).not.toMatch(/[-]{8,}/);
   });
 
@@ -954,7 +954,7 @@ describe('TaskGuestService.previewGuestNotify', () => {
     expect(message).toContain('*Título*: "a" → "b"');
     expect(message).not.toContain('Olá');
     expect(message).not.toContain('Acesse a task');
-    expect(message).not.toContain('taskstation.manyflux');
+    expect(message).not.toContain('https://taskdy.com.br');
     expect(message).not.toContain('~');
   });
 

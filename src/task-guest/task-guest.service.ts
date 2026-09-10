@@ -41,7 +41,7 @@ const E164_REGEX = /^\+[1-9]\d{7,14}$/;
 const WA_MESSAGE_MAX = 1800;
 const DEFAULT_GUEST_TTL_DAYS = 30;
 const GUEST_MESSAGE_FOOTER =
-  `\n\n_Quer experimentar o TaskDY na sua empresa?_\n` + `https://taskstation.manyflux.com.br`;
+  `\n\n_Quer experimentar o TaskDY na sua empresa?_\n` + `https://taskdy.com.br`;
 
 @Injectable()
 export class TaskGuestService {

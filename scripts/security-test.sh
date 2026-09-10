@@ -11,7 +11,7 @@
 # Uso:
 #   chmod +x backend/scripts/security-test.sh
 #   BASE_URL=http://localhost:6969/api/v1\
-#   EMAIL=admin@taskdy.com PASSWORD=Admin@123 \
+#   EMAIL=admin@taskdy.com.br PASSWORD=Admin@123 \
 #     ./backend/scripts/security-test.sh
 #
 # Opcionais para os testes "deep":
@@ -26,7 +26,7 @@
 set -uo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:6969/api/v1}"
-EMAIL="${EMAIL:-admin@taskdy.com}"
+EMAIL="${EMAIL:-admin@taskdy.com.br}"
 PASSWORD="${PASSWORD:-Admin@123456}"
 RUN_THROTTLE="${RUN_THROTTLE:-0}"
 

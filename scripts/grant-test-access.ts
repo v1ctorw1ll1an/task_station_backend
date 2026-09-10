@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { PrismaClient } from '../src/generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 
-const USER_EMAIL = process.env.USER_EMAIL ?? 'admin@taskdy.com';
+const USER_EMAIL = process.env.USER_EMAIL ?? 'admin@taskdy.com.br';
 const COMPANY_ID = process.env.COMPANY_ID!;
 const WORKSPACE_ID = process.env.WORKSPACE_ID!;
 const PROJECT_ID = process.env.PROJECT_ID!;

@@ -8,7 +8,7 @@
 #   chmod +x run-all.sh
 #   ./run-all.sh                          # roda tudo na ordem
 #   ./run-all.sh smoke                    # roda só o smoke
-#   BASE_URL=https://hml.taskdy.com ./run-all.sh
+#   BASE_URL=https://hml.taskdy.com.br ./run-all.sh
 #
 # Importante:
 #   • Rode de uma MÁQUINA DIFERENTE do servidor — localhost esconde gargalos de rede.
@@ -39,7 +39,7 @@ run() {
   echo
   echo "━━━ ▶ $name ━━━"
   k6 run -e BASE_URL="$BASE_URL" \
-         -e EMAIL="${EMAIL:-admin@taskdy.com}" \
+         -e EMAIL="${EMAIL:-admin@taskdy.com.br}" \
          -e PASSWORD="${PASSWORD:-Admin@123456}" \
          "$file"
   echo "━━━ ◀ $name FIM — aguardando 30s para o sistema esfriar ━━━"

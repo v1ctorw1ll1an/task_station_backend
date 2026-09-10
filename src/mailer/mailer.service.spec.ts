@@ -68,7 +68,7 @@ describe('MailerService.constructor', () => {
     expect(() => new MailerService(config, makeLogger() as any)).not.toThrow();
     expect(config.get).toHaveBeenCalledWith(
       'MAILER_FROM',
-      'TaskDY <noreply@contato.taskstation.manyflux.com.br>',
+      'TaskDY <noreply@contato.taskdy.com.br>',
     );
   });
 });

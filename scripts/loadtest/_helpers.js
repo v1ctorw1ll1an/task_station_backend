@@ -1,13 +1,13 @@
 // Helpers compartilhados por todos os scripts de loadtest.
 // Variáveis de ambiente esperadas:
 //   BASE_URL  — default http://localhost:6969/api/v1
-//   EMAIL     — default admin@taskdy.com
+//   EMAIL     — default admin@taskdy.com.br
 //   PASSWORD  — default Admin@123456
 import http from 'k6/http';
 import { fail } from 'k6';
 
 export const BASE_URL = __ENV.BASE_URL || 'http://localhost:6969/api/v1';
-const EMAIL = __ENV.EMAIL || 'admin@taskdy.com';
+const EMAIL = __ENV.EMAIL || 'admin@taskdy.com.br';
 const PASSWORD = __ENV.PASSWORD || 'Admin@123456';
 
 /**

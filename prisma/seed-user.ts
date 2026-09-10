@@ -7,7 +7,7 @@
  * Idempotente: se o usuário/empresa/membership já existirem, reaproveita.
  *
  * Credenciais (env vars, com defaults):
- *   SEED_USER_EMAIL    (default: user@taskdy.com)
+ *   SEED_USER_EMAIL    (default: user@taskdy.com.br)
  *   SEED_USER_PASSWORD (default: User@123456)
  *   SEED_USER_NAME     (default: Regular User)
  *   SEED_COMPANY_NAME  (default: Acme Ltda)
@@ -26,7 +26,7 @@ const adapter = new PrismaPg({
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
-  const email = process.env.SEED_USER_EMAIL ?? 'user@taskdy.com';
+  const email = process.env.SEED_USER_EMAIL ?? 'user@taskdy.com.br';
   const password = process.env.SEED_USER_PASSWORD ?? 'User@123456';
   const name = process.env.SEED_USER_NAME ?? 'Regular User';
   const companyName = process.env.SEED_COMPANY_NAME ?? 'Acme Ltda';
