@@ -21,6 +21,7 @@ import { UpdateCommentDto } from '../projeto/dto/update-comment.dto';
 import { CreateGuestDto } from './dto/create-guest.dto';
 import { UpdateTaskPublicDto } from './dto/update-task-public.dto';
 import { TaskGuestRepository } from './task-guest.repository';
+import { CalendarSyncEnqueuer } from '../google-calendar/calendar-sync.enqueuer';
 
 type GuestCtx = { guestId: string; taskId: string; projectId: string };
 
@@ -50,6 +51,7 @@ export class TaskGuestService {
     private readonly projetoRepo: ProjetoRepository,
     private readonly kanbanGateway: KanbanGateway,
     private readonly configService: ConfigService,
+    private readonly calendarSync: CalendarSyncEnqueuer,
     @InjectPinoLogger(TaskGuestService.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -345,6 +347,7 @@ export class TaskGuestService {
       { guestId: ctx.guestId, taskId: ctx.taskId, fields: history.map((h) => h.field) },
       'Task atualizada por convidado',
     );
+    await this.calendarSync.enqueueForTask(ctx.taskId);
 
     await this.emitTaskUpdated(ctx);
     return this.getPublicTask(ctx);

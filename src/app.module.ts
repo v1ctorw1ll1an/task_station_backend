@@ -27,6 +27,7 @@ import { TaskGuestModule } from './task-guest/task-guest.module';
 import { MaintenanceModule } from './maintenance/maintenance.module';
 import { BillingModule } from './billing/billing.module';
 import { ConviteModule } from './convite/convite.module';
+import { GoogleCalendarModule } from './google-calendar/google-calendar.module';
 
 @Module({
   imports: [
@@ -114,6 +115,7 @@ import { ConviteModule } from './convite/convite.module';
     MaintenanceModule,
     BillingModule,
     ConviteModule,
+    GoogleCalendarModule,
   ],
   providers: [
     {

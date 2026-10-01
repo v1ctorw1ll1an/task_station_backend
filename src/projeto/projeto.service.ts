@@ -31,6 +31,7 @@ import { UpdateChecklistDto } from './dto/update-checklist.dto';
 import { ReorderChecklistDto } from './dto/reorder-checklist.dto';
 import { TransferTaskDto } from './dto/transfer-task.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { CalendarSyncEnqueuer } from '../google-calendar/calendar-sync.enqueuer';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -41,6 +42,7 @@ export class ProjetoService {
     private readonly kanbanGateway: KanbanGateway,
     private readonly notificacaoService: NotificacaoService,
     private readonly prisma: PrismaService,
+    private readonly calendarSync: CalendarSyncEnqueuer,
     @InjectPinoLogger(ProjetoService.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -244,6 +246,7 @@ export class ProjetoService {
     });
 
     this.logger.info({ projectId, taskId: task.id, createdById: userId }, 'Task created');
+    await this.calendarSync.enqueueForTask(task.id);
     this.kanbanGateway.emitToProject(projectId, 'task:created', {
       task,
       columnId: dto.columnId,
@@ -385,6 +388,7 @@ export class ProjetoService {
     );
 
     this.logger.info({ projectId, taskId, changes: dto, performedById }, 'Task updated');
+    await this.calendarSync.enqueueForTask(taskId);
     this.kanbanGateway.emitToProject(projectId, 'task:updated', {
       task: finalTask,
       actorId: performedById,
@@ -481,6 +485,8 @@ export class ProjetoService {
       { projectId, taskId, columnId: dto.columnId, afterTaskId: dto.afterTaskId, performedById },
       'Task moved',
     );
+    // Entrar/sair da coluna final troca o "✓ " do título no Google.
+    if (isColumnChange) await this.calendarSync.enqueueForTask(taskId);
     this.kanbanGateway.emitToProject(projectId, 'task:moved', {
       taskId,
       fromColumnId: task.columnId,
@@ -582,6 +588,7 @@ export class ProjetoService {
       { projectId, taskId, performedById, stoppedSessions: activeSessions.length },
       'Task soft-deleted',
     );
+    await this.calendarSync.enqueueForTask(taskId);
     this.kanbanGateway.emitToProject(projectId, 'task:deleted', {
       taskId,
       columnId: task.columnId,
@@ -601,6 +608,7 @@ export class ProjetoService {
 
     const restored = await this.repo.restoreTask(taskId);
     this.logger.info({ projectId, taskId, performedById }, 'Task restored');
+    await this.calendarSync.enqueueForTask(taskId);
     this.kanbanGateway.emitToProject(projectId, 'task:restored', {
       task: restored,
       columnId: restored.columnId,
@@ -620,6 +628,7 @@ export class ProjetoService {
       { projectId, taskId, assigneeId: dto.assigneeId, performedById },
       'Task assigned',
     );
+    await this.calendarSync.enqueueForTask(taskId);
     return this.repo.findTaskById(taskId, projectId);
   }
 
@@ -1151,6 +1160,8 @@ export class ProjetoService {
       },
       'Task transferred',
     );
+    await this.calendarSync.enqueueForTask(newTask.id);
+    if (dto.mode === 'cut') await this.calendarSync.enqueueForTask(taskId);
 
     return {
       task: newTask,

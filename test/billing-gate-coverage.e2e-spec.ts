@@ -66,6 +66,13 @@ const ISENTAS: Record<string, string> = {
   'DELETE /me/sticky-notes/:id/tasks/:taskId':
     'vínculo do recado pessoal com uma task; não altera a task',
   'PATCH /me/calendar-events/:id/rsvp': 'responder convite é do convidado, não escrita da empresa',
+  'POST /integrations/google/webhook':
+    'é o Google avisando que a agenda mudou; o gate por plano mora no sync (elegibilidade)',
+  'DELETE /integrations/google': 'desconectar a própria conta Google sempre tem que funcionar',
+  'PATCH /integrations/google/sources':
+    'escolher quais calendários do Google importar é preferência do usuário',
+  'POST /integrations/google/sync':
+    'só reagenda a sincronização; o que é de empresa inelegível fica congelado no sync',
   'POST /uploads/image':
     'só guarda o arquivo; publicar o comunicado passa por empresa/:companyId, que é barrado',
 };
@@ -83,6 +90,8 @@ const TRATADAS_NO_FLUXO: Record<string, string> = {
   'DELETE /me/calendar-events/:id/attendees/:userId': 'evento.service.ts → assertNotBlocked',
   'POST /convites/:token/aceitar':
     'convite.service.ts → getSummary(empresa do convite) recusa suspensa + assertSeatAvailable',
+  'POST /integrations/google/callback':
+    'google-calendar-connection.service.ts → completeConnect exige ≥1 empresa elegível (active/courtesy/past_due)',
   'POST /task-sessions': 'task-session.service.ts → assertNotBlocked(empresa da task)',
   'PATCH /task-sessions/:id/pause': 'task-session.service.ts → assertNotBlocked',
   'PATCH /task-sessions/:id/resume': 'task-session.service.ts → assertNotBlocked',

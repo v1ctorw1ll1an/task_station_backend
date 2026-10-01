@@ -23,6 +23,8 @@ const PREF_KEY_MAP: Record<NotificationType, string> = {
   TASK_COMMENT: 'taskComment',
   TASK_UPDATED: 'taskUpdated',
   EVENT_REMINDER: 'eventReminder',
+  // Aviso operacional de integração — mesmo canal dos avisos do administrador.
+  INTEGRATION_ALERT: 'adminBroadcast',
 };
 
 const BROADCAST_CHUNK_SIZE = 500;

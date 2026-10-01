@@ -87,6 +87,7 @@ function makeService(
       projetoRepo as any,
       kanbanGateway as any,
       configService,
+      { enqueueForTask: jest.fn() } as any,
       logger as any,
     ),
     logger,

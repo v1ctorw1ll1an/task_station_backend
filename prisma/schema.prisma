@@ -49,6 +49,7 @@ enum NotificationType {
   TASK_COMMENT
   TASK_UPDATED
   EVENT_REMINDER
+  INTEGRATION_ALERT // integração externa parou (ex.: Google revogou o acesso à agenda)
 
   @@map("notification_type")
 }
@@ -176,12 +177,12 @@ model User {
   updatedAt         DateTime  @updatedAt @map("updated_at")
   deletedAt         DateTime? @map("deleted_at")
 
-  createdCompanies    Company[]               @relation("CompanyCreatedBy")
-  createdWorkspaces   Workspace[]             @relation("WorkspaceCreatedBy")
-  createdProjects     Project[]               @relation("ProjectCreatedBy")
-  reportedTasks       Task[]                  @relation("TaskReporter")
+  createdCompanies    Company[]                 @relation("CompanyCreatedBy")
+  createdWorkspaces   Workspace[]               @relation("WorkspaceCreatedBy")
+  createdProjects     Project[]                 @relation("ProjectCreatedBy")
+  reportedTasks       Task[]                    @relation("TaskReporter")
   taskAssignments     TaskAssignee[]
-  createdTasks        Task[]                  @relation("TaskCreatedBy")
+  createdTasks        Task[]                    @relation("TaskCreatedBy")
   taskSessions        TaskSession[]
   memberships         Membership[]
   projectRestrictions ProjectRestriction[]
@@ -189,18 +190,19 @@ model User {
   taskHistories       TaskHistory[]
   taskComments        TaskComment[]
   taskAttachments     TaskAttachment[]
-  notifications       Notification[]          @relation("UserNotifications")
-  triggeredNotifs     Notification[]          @relation("NotificationActors")
+  notifications       Notification[]            @relation("UserNotifications")
+  triggeredNotifs     Notification[]            @relation("NotificationActors")
   notifPreference     NotificationPreference?
   workspaceOrders     UserWorkspaceOrder[]
   projectOrders       UserProjectOrder[]
   taskChecklists      TaskChecklist[]
   stickyNotes         StickyNote[]
-  ownedEvents         CalendarEvent[]         @relation("CalendarEventOwner")
+  ownedEvents         CalendarEvent[]           @relation("CalendarEventOwner")
   eventAttendees      CalendarEventAttendee[]
-  invitedTaskGuests   TaskGuest[]             @relation("TaskGuestInvitedBy")
-  sentInvites         CompanyInvite[]         @relation("CompanyInviteInvitedBy")
-  acceptedInvites     CompanyInvite[]         @relation("CompanyInviteAcceptedBy")
+  invitedTaskGuests   TaskGuest[]               @relation("TaskGuestInvitedBy")
+  sentInvites         CompanyInvite[]           @relation("CompanyInviteInvitedBy")
+  acceptedInvites     CompanyInvite[]           @relation("CompanyInviteAcceptedBy")
+  googleCalendar      GoogleCalendarConnection?
 
   @@index([deletedAt])
   @@map("users")
@@ -360,6 +362,7 @@ model Task {
   stickyNoteLinks StickyNoteTaskLink[]
   calendarEvents  CalendarEvent[]
   taskGuests      TaskGuest[]
+  googleLinks     GoogleEventLink[]
 
   @@unique([projectId, taskNumber])
   @@index([columnId, order])
@@ -665,25 +668,28 @@ model StickyNoteTaskLink {
 }
 
 model CalendarEvent {
-  id              String          @id @default(uuid())
-  ownerId         String          @map("owner_id")
-  companyId       String?         @map("company_id")
-  workspaceId     String?         @map("workspace_id")
-  taskId          String?         @map("task_id")
-  title           String
-  description     String?
-  location        String?
-  color           String?
-  allDay          Boolean         @default(false) @map("all_day")
-  startsAt        DateTime        @map("starts_at") @db.Timestamptz
-  endsAt          DateTime        @map("ends_at") @db.Timestamptz
-  timezone        String          @default("America/Sao_Paulo")
-  rrule           String?
-  recurrenceEndAt DateTime?       @map("recurrence_end_at") @db.Timestamptz
-  visibility      EventVisibility @default(private)
-  createdAt       DateTime        @default(now()) @map("created_at")
-  updatedAt       DateTime        @updatedAt @map("updated_at")
-  deletedAt       DateTime?       @map("deleted_at")
+  id               String          @id @default(uuid())
+  ownerId          String          @map("owner_id")
+  companyId        String?         @map("company_id")
+  workspaceId      String?         @map("workspace_id")
+  taskId           String?         @map("task_id")
+  title            String
+  description      String?
+  location         String?
+  color            String?
+  allDay           Boolean         @default(false) @map("all_day")
+  startsAt         DateTime        @map("starts_at") @db.Timestamptz
+  endsAt           DateTime        @map("ends_at") @db.Timestamptz
+  timezone         String          @default("America/Sao_Paulo")
+  rrule            String?
+  recurrenceEndAt  DateTime?       @map("recurrence_end_at") @db.Timestamptz
+  visibility       EventVisibility @default(private)
+  // Série que veio do Google e não tem tradução fiel (ou de calendário sem permissão
+  // de escrita): o TaskDY mostra, mas só o Google edita.
+  externalReadOnly Boolean         @default(false) @map("external_read_only")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+  deletedAt        DateTime?       @map("deleted_at")
 
   owner       User                      @relation("CalendarEventOwner", fields: [ownerId], references: [id])
   company     Company?                  @relation(fields: [companyId], references: [id])
@@ -693,6 +699,7 @@ model CalendarEvent {
   reminders   CalendarEventReminder[]
   exceptions  CalendarEventException[]
   guestEmails CalendarEventGuestEmail[]
+  googleLinks GoogleEventLink[]
 
   @@index([ownerId, deletedAt])
   @@index([startsAt, deletedAt])
@@ -989,4 +996,146 @@ model BillingNotice {
 
   @@unique([subscriptionId, kind, anchorAt])
   @@map("billing_notices")
+}
+
+// ── Integração Google Calendar ───────────────────────────────────────────────
+
+enum GoogleConnectionStatus {
+  active
+  revoked // desconectado pelo usuário ou token invalidado pelo Google (invalid_grant)
+  error // falha persistente — ver lastError
+
+  @@map("google_connection_status")
+}
+
+enum GoogleLinkKind {
+  event
+  task
+
+  @@map("google_link_kind")
+}
+
+enum GoogleLinkOrigin {
+  taskdy
+  google
+
+  @@map("google_link_origin")
+}
+
+enum CalendarSyncJobKind {
+  push_event // reconcilia um CalendarEvent com o Google (cria, atualiza ou remove)
+  push_task // idem para uma Task com prazo
+  pull_source // puxa as mudanças de um calendário (syncToken)
+  full_resync // backfill completo da conexão
+
+  @@map("calendar_sync_job_kind")
+}
+
+// Uma conta Google por usuário (Q4). Desconectar apaga os tokens e marca `revoked`,
+// mas mantém a linha para reatar sem duplicar (Q19).
+model GoogleCalendarConnection {
+  id                   String                 @id @default(uuid())
+  userId               String                 @unique @map("user_id")
+  googleAccountId      String                 @map("google_account_id")
+  googleEmail          String                 @map("google_email")
+  // AES-256-GCM com GOOGLE_TOKEN_ENC_KEY — nunca em claro no banco.
+  refreshTokenEnc      String?                @map("refresh_token_enc")
+  accessTokenEnc       String?                @map("access_token_enc")
+  accessTokenExpiresAt DateTime?              @map("access_token_expires_at") @db.Timestamptz
+  taskdyCalendarId     String?                @map("taskdy_calendar_id")
+  status               GoogleConnectionStatus @default(active)
+  lastSyncAt           DateTime?              @map("last_sync_at") @db.Timestamptz
+  lastError            String?                @map("last_error")
+  createdAt            DateTime               @default(now()) @map("created_at")
+  updatedAt            DateTime               @updatedAt @map("updated_at")
+
+  user    User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sources GoogleCalendarSource[]
+  links   GoogleEventLink[]
+
+  @@index([status])
+  @@map("google_calendar_connections")
+}
+
+// Calendários da conta Google que o TaskDY conhece: o "TaskDY" dedicado (sempre
+// sincronizado) e os que o usuário escolheu importar (Q6/Q9).
+model GoogleCalendarSource {
+  id                String    @id @default(uuid())
+  connectionId      String    @map("connection_id")
+  googleCalendarId  String    @map("google_calendar_id")
+  summary           String
+  accessRole        String    @map("access_role")
+  timeZone          String?   @map("time_zone")
+  isTaskdyCalendar  Boolean   @default(false) @map("is_taskdy_calendar")
+  importEnabled     Boolean   @default(false) @map("import_enabled")
+  syncToken         String?   @map("sync_token")
+  channelId         String?   @unique @map("channel_id")
+  channelResourceId String?   @map("channel_resource_id")
+  // SHA-256 do token do canal — o Google devolve o token em claro no header.
+  channelTokenHash  String?   @map("channel_token_hash")
+  channelExpiresAt  DateTime? @map("channel_expires_at") @db.Timestamptz
+  lastPulledAt      DateTime? @map("last_pulled_at") @db.Timestamptz
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  connection GoogleCalendarConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  links      GoogleEventLink[]
+
+  @@unique([connectionId, googleCalendarId])
+  @@index([channelExpiresAt])
+  @@map("google_calendar_sources")
+}
+
+// Par (item do TaskDY ↔ evento no Google) de uma conexão. Um mesmo CalendarEvent
+// tem um link por usuário conectado (dono e cada convidado recebem sua cópia — Q7).
+model GoogleEventLink {
+  id              String           @id @default(uuid())
+  connectionId    String           @map("connection_id")
+  sourceId        String           @map("source_id")
+  googleEventId   String           @map("google_event_id")
+  kind            GoogleLinkKind
+  calendarEventId String?          @map("calendar_event_id")
+  taskId          String?          @map("task_id")
+  etag            String?
+  googleUpdatedAt DateTime?        @map("google_updated_at") @db.Timestamptz
+  localUpdatedAt  DateTime?        @map("local_updated_at") @db.Timestamptz
+  // Edição feita no Google é revertida (convidado, tarefa, empresa congelada...).
+  readOnly        Boolean          @default(false) @map("read_only")
+  origin          GoogleLinkOrigin
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  connection    GoogleCalendarConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  source        GoogleCalendarSource     @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  calendarEvent CalendarEvent?           @relation(fields: [calendarEventId], references: [id], onDelete: Cascade)
+  task          Task?                    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceId, googleEventId])
+  @@unique([connectionId, calendarEventId])
+  @@unique([connectionId, taskId])
+  @@index([calendarEventId])
+  @@index([taskId])
+  @@map("google_event_links")
+}
+
+// Outbox da sincronização (não há fila de jobs no projeto). Uma linha = trabalho
+// pendente; o worker apaga ao concluir. `(userId, kind, refId)` deduplica: várias
+// mutações seguidas no mesmo item viram um único job.
+model CalendarSyncJob {
+  id          String              @id @default(uuid())
+  userId      String              @map("user_id")
+  kind        CalendarSyncJobKind
+  // id do CalendarEvent / Task / GoogleCalendarSource; '' para full_resync.
+  refId       String              @default("") @map("ref_id")
+  runAfter    DateTime            @default(now()) @map("run_after") @db.Timestamptz
+  // Bump a cada re-enfileiramento: o worker só apaga se ninguém re-enfileirou no meio.
+  enqueuedAt  DateTime            @default(now()) @map("enqueued_at") @db.Timestamptz
+  lockedUntil DateTime?           @map("locked_until") @db.Timestamptz
+  attempts    Int                 @default(0)
+  lastError   String?             @map("last_error")
+  createdAt   DateTime            @default(now()) @map("created_at")
+
+  @@unique([userId, kind, refId])
+  @@index([runAfter])
+  @@map("calendar_sync_jobs")
 }

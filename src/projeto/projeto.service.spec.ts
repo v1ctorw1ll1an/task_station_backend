@@ -101,6 +101,7 @@ function makeService(repo: jest.Mocked<ProjetoRepository>) {
     kanbanGateway,
     notificacaoService,
     prismaService,
+    { enqueueForTask: jest.fn(), enqueueForEvent: jest.fn() } as never,
     logger as never,
   );
   return service;

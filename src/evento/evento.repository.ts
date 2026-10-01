@@ -13,6 +13,7 @@ const eventInclude = {
   reminders: true,
   exceptions: true,
   guestEmails: true,
+  googleLinks: { where: { origin: 'google' }, select: { id: true }, take: 1 },
 } satisfies Prisma.CalendarEventInclude;
 
 export type CalendarEventWithRelations = Prisma.CalendarEventGetPayload<{
@@ -68,7 +69,18 @@ export class EventoRepository {
         ownership,
         overlapClause,
         { deletedAt: null },
-        ...(filters.companyId ? [{ companyId: filters.companyId }] : []),
+        // Na agenda de uma empresa entram também os eventos pessoais do usuário
+        // (criados no Google, Q5) — são dele e aparecem em todas as empresas.
+        ...(filters.companyId
+          ? [
+              {
+                OR: [
+                  { companyId: filters.companyId },
+                  { companyId: null, workspaceId: null, ownerId: userId },
+                ],
+              },
+            ]
+          : []),
         ...(filters.workspaceId ? [{ workspaceId: filters.workspaceId }] : []),
         ...(filters.title
           ? [{ title: { contains: filters.title, mode: 'insensitive' as const } }]
@@ -98,6 +110,14 @@ export class EventoRepository {
       where: { id },
       data,
       include: eventInclude,
+    });
+  }
+
+  /** Marca a série como alterada (exceções não mexem no updatedAt dela). */
+  async touch(id: string): Promise<void> {
+    await this.prisma.calendarEvent.update({
+      where: { id },
+      data: { updatedAt: new Date() },
     });
   }
 

@@ -1,4 +1,9 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { rrulestr } from 'rrule';
 import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
@@ -17,6 +22,7 @@ import { UpdateEventDto } from './dto/update-event.dto';
 import { ListEventsQueryDto } from './dto/list-events-query.dto';
 import { EventMutationScope, EventMutationScopeDto } from './dto/event-mutation-scope.dto';
 import { checkDateRange } from '../common/date-range';
+import { CalendarSyncEnqueuer } from '../google-calendar/calendar-sync.enqueuer';
 
 export interface EventOccurrence {
   eventId: string;
@@ -48,6 +54,10 @@ export interface EventOccurrence {
   taskId: string | null;
   workspaceId: string | null;
   companyId: string | null;
+  /** Série vinda do Google sem tradução fiel (ou de calendário só-leitura): só o Google edita. */
+  externalReadOnly: boolean;
+  /** Evento importado do Google Agenda (selo na UI). */
+  fromGoogle: boolean;
 }
 
 @Injectable()
@@ -57,6 +67,7 @@ export class EventoService {
     private readonly prisma: PrismaService,
     private readonly mailer: MailerService,
     private readonly access: BillingAccessService,
+    private readonly calendarSync: CalendarSyncEnqueuer,
     @InjectPinoLogger(EventoService.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -78,6 +89,21 @@ export class EventoService {
       cid = ws?.companyId ?? null;
     }
     if (cid) await this.access.assertCanMutate(cid);
+  }
+
+  /**
+   * Empresa e workspace informados juntos têm que bater: senão o gate de cobrança
+   * olharia uma empresa (paga) e o evento cairia no workspace de outra.
+   */
+  private async assertScopeConsistent(companyId?: string, workspaceId?: string): Promise<void> {
+    if (!companyId || !workspaceId) return;
+    const ws = await this.prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { companyId: true },
+    });
+    if (!ws || ws.companyId !== companyId) {
+      throw new BadRequestException('Workspace não pertence à empresa informada');
+    }
   }
 
   /** Apagar evento continua liberado em somente-leitura — só a suspensão barra. */
@@ -228,6 +254,8 @@ export class EventoService {
         taskId: ev.taskId,
         workspaceId: ev.workspaceId,
         companyId: ev.companyId,
+        externalReadOnly: ev.externalReadOnly,
+        fromGoogle: ev.googleLinks.length > 0,
       });
     }
     return result;
@@ -241,6 +269,7 @@ export class EventoService {
   }
 
   async create(userId: string, dto: CreateEventDto): Promise<CalendarEventWithRelations> {
+    await this.assertScopeConsistent(dto.companyId, dto.workspaceId);
     await this.assertEventNotBlocked(dto.companyId, dto.workspaceId);
     this.validateDates(dto.startsAt, dto.endsAt);
     const tz = dto.timezone ?? 'America/Sao_Paulo';
@@ -302,6 +331,7 @@ export class EventoService {
       'CalendarEvent criado',
     );
     void this.notifyAttendees(created, 'created');
+    await this.calendarSync.enqueueForEvent(created.id);
     return created;
   }
 
@@ -314,6 +344,7 @@ export class EventoService {
     const ev = await this.repo.findById(id);
     if (!ev) throw new NotFoundException('Evento não encontrado');
     this.assertOwner(ev, userId);
+    this.assertNotExternalReadOnly(ev);
     await this.assertEventNotBlocked(ev.companyId, ev.workspaceId);
 
     const scope = scopeDto.scope ?? EventMutationScope.all;
@@ -333,6 +364,9 @@ export class EventoService {
         overrideStartsAt: dto.startsAt ? new Date(dto.startsAt) : null,
         overrideEndsAt: dto.endsAt ? new Date(dto.endsAt) : null,
       });
+      // Exceção não mexe no updatedAt da série — tocamos para a sincronização perceber.
+      await this.repo.touch(id);
+      await this.calendarSync.enqueueForEvent(id);
       const updated = await this.repo.findById(id);
       return updated as CalendarEventWithRelations;
     }
@@ -382,6 +416,7 @@ export class EventoService {
     }
 
     this.logger.info({ eventId: id, ownerId: userId }, 'CalendarEvent atualizado');
+    await this.calendarSync.enqueueForEvent(id);
     const refreshed = await this.repo.findById(id);
     if (refreshed) void this.notifyAttendees(refreshed, 'updated');
     return refreshed ?? updated;
@@ -391,6 +426,7 @@ export class EventoService {
     const ev = await this.repo.findById(id);
     if (!ev) throw new NotFoundException('Evento não encontrado');
     this.assertOwner(ev, userId);
+    this.assertNotExternalReadOnly(ev);
     await this.assertEventDeletable(ev.companyId, ev.workspaceId);
 
     const scope = scopeDto.scope ?? EventMutationScope.all;
@@ -404,6 +440,8 @@ export class EventoService {
         originalDate,
         isCancelled: true,
       });
+      await this.repo.touch(id);
+      await this.calendarSync.enqueueForEvent(id);
       this.logger.info(
         { eventId: id, originalDate: scopeDto.originalDate },
         'Ocorrência cancelada',
@@ -414,23 +452,29 @@ export class EventoService {
     await this.repo.softDelete(id);
     this.logger.info({ eventId: id }, 'CalendarEvent deletado');
     void this.notifyAttendees(ev, 'cancelled');
+    await this.calendarSync.enqueueForEvent(id);
   }
 
   async inviteAttendee(userId: string, eventId: string, attendeeId: string) {
     const ev = await this.repo.findById(eventId);
     if (!ev) throw new NotFoundException('Evento não encontrado');
     this.assertOwner(ev, userId);
+    await this.assertEventNotBlocked(ev.companyId, ev.workspaceId);
     if (attendeeId === userId) {
       throw new ForbiddenException('Você é o dono — não precisa se convidar');
     }
-    return this.repo.addAttendee(eventId, attendeeId);
+    const attendee = await this.repo.addAttendee(eventId, attendeeId);
+    await this.calendarSync.enqueueForEvent(eventId);
+    return attendee;
   }
 
   async removeAttendee(userId: string, eventId: string, attendeeId: string) {
     const ev = await this.repo.findById(eventId);
     if (!ev) throw new NotFoundException('Evento não encontrado');
     this.assertOwner(ev, userId);
+    await this.assertEventNotBlocked(ev.companyId, ev.workspaceId);
     await this.repo.removeAttendee(eventId, attendeeId);
+    await this.calendarSync.enqueueForEvent(eventId);
   }
 
   async rsvp(userId: string, eventId: string, status: AttendeeStatus) {
@@ -440,7 +484,10 @@ export class EventoService {
     if (!attendee) {
       throw new ForbiddenException('Você não foi convidado para este evento');
     }
-    return this.repo.setRsvp(eventId, userId, status);
+    const result = await this.repo.setRsvp(eventId, userId, status);
+    // Recusar tira a cópia do Google do convidado; aceitar de volta recoloca.
+    await this.calendarSync.enqueueForEvent(eventId);
+    return result;
   }
 
   // --- helpers ---
@@ -449,6 +496,12 @@ export class EventoService {
     const isAttendee = ev.attendees.some((a) => a.userId === userId);
     if (ev.ownerId !== userId && !isAttendee) {
       throw new NotFoundException('Evento não encontrado');
+    }
+  }
+
+  private assertNotExternalReadOnly(ev: CalendarEventWithRelations) {
+    if (ev.externalReadOnly) {
+      throw new ForbiddenException('Este evento vem do Google Agenda e só pode ser editado por lá');
     }
   }
 
@@ -489,25 +542,7 @@ export class EventoService {
     dtstartIso: string,
     timezone = 'America/Sao_Paulo',
   ): Date | null {
-    if (rrule.startsWith('RDATES=')) {
-      const dates = expandCustomDates(rrule, new Date(dtstartIso), timezone);
-      if (dates.length === 0) return null;
-      return dates.reduce((max, d) => (d > max ? d : max));
-    }
-    const upper = rrule.toUpperCase();
-    if (!upper.includes('UNTIL=') && !upper.includes('COUNT=')) {
-      return null; // recorrência infinita
-    }
-    try {
-      const dtstart = formatDtstartUtc(new Date(dtstartIso));
-      const rule = rrulestr(`DTSTART:${dtstart}\nRRULE:${rrule}`, {
-        forceset: false,
-      });
-      const all = rule.all((_, i) => i < 1000);
-      return all.length > 0 ? all[all.length - 1] : null;
-    } catch {
-      return null;
-    }
+    return computeRecurrenceEndAt(rrule, dtstartIso, timezone);
   }
 
   /**
@@ -584,6 +619,33 @@ export class EventoService {
           ]
         : []),
     ]);
+  }
+}
+
+/** Fim da série (última ocorrência) — null para recorrência infinita. */
+export function computeRecurrenceEndAt(
+  rrule: string,
+  dtstartIso: string,
+  timezone = 'America/Sao_Paulo',
+): Date | null {
+  if (rrule.startsWith('RDATES=')) {
+    const dates = expandCustomDates(rrule, new Date(dtstartIso), timezone);
+    if (dates.length === 0) return null;
+    return dates.reduce((max, d) => (d > max ? d : max));
+  }
+  const upper = rrule.toUpperCase();
+  if (!upper.includes('UNTIL=') && !upper.includes('COUNT=')) {
+    return null; // recorrência infinita
+  }
+  try {
+    const dtstart = formatDtstartUtc(new Date(dtstartIso));
+    const rule = rrulestr(`DTSTART:${dtstart}\nRRULE:${rrule}`, {
+      forceset: false,
+    });
+    const all = rule.all((_, i) => i < 1000);
+    return all.length > 0 ? all[all.length - 1] : null;
+  } catch {
+    return null;
   }
 }
 

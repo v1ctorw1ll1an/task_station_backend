@@ -203,6 +203,7 @@ function makeService(
     kanbanGateway as never,
     notificacaoService as never,
     prismaService as never,
+    { enqueueForTask: jest.fn(), enqueueForEvent: jest.fn() } as never,
     logger as never,
   );
 

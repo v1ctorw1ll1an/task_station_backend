@@ -23,6 +23,7 @@ function makeRepo(
     update: jest.fn(),
     softDelete: jest.fn(),
     upsertException: jest.fn(),
+    touch: jest.fn(),
     findAttendee: jest.fn(),
     addAttendee: jest.fn(),
     removeAttendee: jest.fn(),
@@ -63,8 +64,16 @@ function makeService(
   const prisma = makePrisma();
   const mailer = makeMailer();
   const logger = makeLogger();
-  const service = new EventoService(repo, prisma, mailer, access as any, logger as any);
-  return { service, repo, prisma, mailer, logger, access };
+  const calendarSync = { enqueueForEvent: jest.fn().mockResolvedValue(undefined) };
+  const service = new EventoService(
+    repo,
+    prisma,
+    mailer,
+    access as any,
+    calendarSync as any,
+    logger as any,
+  );
+  return { service, repo, prisma, mailer, logger, access, calendarSync };
 }
 
 function makeEvent(
@@ -94,6 +103,7 @@ function makeEvent(
     reminders: [],
     exceptions: [],
     guestEmails: [],
+    googleLinks: [],
     ...overrides,
   } as unknown as CalendarEventWithRelations;
 }

@@ -38,6 +38,8 @@ export class SoftDeletePurgeService {
 
     // Ordem: filhos antes de pais para respeitar FKs (mesmo com cascade,
     // explicitar reduz volume de cascade dentro de uma única transação).
+    // Vínculos com o Google (`google_event_links`) caem junto com a task/evento
+    // expurgado (FK ON DELETE CASCADE) — a cópia no Google já saiu no soft-delete.
     const steps: Array<[string, () => Promise<{ count: number }>]> = [
       ['taskChecklist', () => this.prisma.taskChecklist.deleteMany({ where })],
       ['taskComment', () => this.prisma.taskComment.deleteMany({ where })],

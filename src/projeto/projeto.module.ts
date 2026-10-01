@@ -15,11 +15,13 @@ import { ProjetoAdminGuard } from './guards/projeto-admin.guard';
 import { WsAuthGuard } from '../common/guards/ws-auth.guard';
 import { KanbanGateway } from './kanban.gateway';
 import { NotificacaoModule } from '../notificacao/notificacao.module';
+import { GoogleCalendarModule } from '../google-calendar/google-calendar.module';
 
 @Module({
   imports: [
     PrismaModule,
     NotificacaoModule,
+    GoogleCalendarModule,
     MulterModule.register({ storage: memoryStorage() }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
