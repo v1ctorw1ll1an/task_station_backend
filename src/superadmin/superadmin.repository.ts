@@ -51,6 +51,11 @@ export class SuperadminRepository {
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * limit,
         take: limit,
+        include: {
+          subscription: {
+            select: { status: true, superadminLocked: true, accessSuspended: true },
+          },
+        },
       }),
       this.prisma.company.count({ where }),
     ]);
@@ -210,7 +215,14 @@ export class SuperadminRepository {
         role: true,
         createdAt: true,
         user: {
-          select: { id: true, name: true, email: true, phone: true, isActive: true },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            isActive: true,
+            lastLoginAt: true,
+          },
         },
       },
       orderBy: { createdAt: 'asc' },

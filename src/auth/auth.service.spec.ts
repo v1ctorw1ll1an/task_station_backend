@@ -169,6 +169,17 @@ describe('AuthService.login', () => {
     );
   });
 
+  it('registra o horário do login no usuário', async () => {
+    const repo = makeRepo();
+    const service = makeService(repo);
+    await service.login(usuario);
+
+    expect(repo.updateUser).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({ lastLoginAt: expect.any(Date) }),
+    );
+  });
+
   it('cada login gera uma sessão diferente — a anterior deixa de valer', async () => {
     const repo = makeRepo();
     const service = makeService(repo);

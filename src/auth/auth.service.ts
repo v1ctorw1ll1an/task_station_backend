@@ -80,7 +80,7 @@ export class AuthService {
     mustResetPassword: boolean;
   }) {
     const sid = crypto.randomUUID();
-    await this.repo.updateUser(user.id, { activeSessionId: sid });
+    await this.repo.updateUser(user.id, { activeSessionId: sid, lastLoginAt: new Date() });
 
     const payload: JwtPayload = {
       sub: user.id,
