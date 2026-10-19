@@ -143,6 +143,14 @@ export class CalendarSyncService {
     }
     if (!isItemSyncable(eventCompanyId(ev), elig)) return; // congelado (Q18)
 
+    // Importado somente-leitura que perdeu o vínculo com o calendário de origem
+    // (calendário removido, troca de conta): continua sendo do Google, não vira
+    // evento do TaskDY. Cópia já enviada ao calendário TaskDY é retirada.
+    if (ev.externalReadOnly && ev.ownerId === userId && link?.origin !== 'google') {
+      if (link) await this.removeRemote(ctx, link);
+      return;
+    }
+
     const writableSource = !link || isWritableAccessRole(link.source.accessRole);
     const readOnly = ev.ownerId !== userId || ev.externalReadOnly || !writableSource;
 
@@ -804,32 +812,39 @@ export class CalendarSyncService {
     const { data } = mapping;
     const writable = isWritableAccessRole(source.accessRole);
 
-    const ev = await this.prisma.calendarEvent.create({
-      data: {
-        ownerId: ctx.conn.userId,
-        title: data.title,
-        description: data.description,
-        location: data.location,
-        color: googleEventColor(g, source.color),
-        allDay: data.allDay,
-        startsAt: data.startsAt,
-        endsAt: data.endsAt,
-        timezone: data.timezone,
-        rrule: data.rrule,
-        recurrenceEndAt: data.rrule
-          ? computeRecurrenceEndAt(data.rrule, data.startsAt.toISOString(), data.timezone)
-          : null,
-        externalReadOnly: !mapping.mappable || !writable,
-        ...(data.cancelledDates.length > 0 && {
-          exceptions: {
-            create: data.cancelledDates.map((originalDate) => ({
-              originalDate,
-              isCancelled: true,
-            })),
+    const fields = {
+      title: data.title,
+      description: data.description,
+      location: data.location,
+      color: googleEventColor(g, source.color),
+      allDay: data.allDay,
+      startsAt: data.startsAt,
+      endsAt: data.endsAt,
+      timezone: data.timezone,
+      rrule: data.rrule,
+      recurrenceEndAt: data.rrule
+        ? computeRecurrenceEndAt(data.rrule, data.startsAt.toISOString(), data.timezone)
+        : null,
+      externalReadOnly: !mapping.mappable || !writable,
+    };
+
+    const orphan = fields.externalReadOnly ? await this.findOrphanImport(ctx, fields) : null;
+    const ev = orphan
+      ? await this.prisma.calendarEvent.update({ where: { id: orphan.id }, data: fields })
+      : await this.prisma.calendarEvent.create({
+          data: {
+            ownerId: ctx.conn.userId,
+            ...fields,
+            ...(data.cancelledDates.length > 0 && {
+              exceptions: {
+                create: data.cancelledDates.map((originalDate) => ({
+                  originalDate,
+                  isCancelled: true,
+                })),
+              },
+            }),
           },
-        }),
-      },
-    });
+        });
 
     let etag = g.etag ?? null;
     let updated = g.updated ?? null;
@@ -886,6 +901,39 @@ export class CalendarSyncService {
       },
       'Evento do Google importado como pessoal',
     );
+  }
+
+  /**
+   * Evento importado somente-leitura que ficou sem vínculo de origem (o calendário
+   * saiu da lista e voltou, troca de conta): o mesmo evento chegando de novo reata
+   * nele em vez de duplicar. Calendário só-leitura não guarda o taskdyId, então o
+   * casamento é pelo conteúdo — só eventos simples, sem recorrência.
+   */
+  private async findOrphanImport(
+    ctx: SyncContext,
+    f: { title: string; allDay: boolean; startsAt: Date; endsAt: Date; rrule: string | null },
+  ): Promise<{ id: string } | null> {
+    if (f.rrule) return null;
+    const orphan = await this.prisma.calendarEvent.findFirst({
+      where: {
+        ownerId: ctx.conn.userId,
+        deletedAt: null,
+        externalReadOnly: true,
+        rrule: null,
+        title: f.title,
+        allDay: f.allDay,
+        startsAt: f.startsAt,
+        endsAt: f.endsAt,
+        googleLinks: { none: { origin: 'google' } },
+      },
+      select: { id: true },
+    });
+    if (!orphan) return null;
+    // Cópia que foi parar no calendário TaskDY: sai do Google e libera o vínculo.
+    const stale = await this.findLink(ctx.conn.id, 'event', orphan.id);
+    if (stale) await this.removeRemote(ctx, stale);
+    this.logger.info({ userId: ctx.conn.userId, eventId: orphan.id }, 'Importado órfão reatado');
+    return orphan;
   }
 
   /** Tarefa é somente-leitura no Google: qualquer mudança lá é desfeita (Q2). */

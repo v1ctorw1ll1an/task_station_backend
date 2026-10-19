@@ -255,7 +255,9 @@ export class EventoService {
         workspaceId: ev.workspaceId,
         companyId: ev.companyId,
         externalReadOnly: ev.externalReadOnly,
-        fromGoogle: ev.googleLinks.length > 0,
+        // Somente-leitura externo só existe em evento importado — vale mesmo se o
+        // vínculo com o calendário de origem caiu.
+        fromGoogle: ev.googleLinks.length > 0 || ev.externalReadOnly,
       });
     }
     return result;

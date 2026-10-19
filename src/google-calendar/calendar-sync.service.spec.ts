@@ -41,7 +41,15 @@ function makeEvent(over: Record<string, unknown> = {}) {
   };
 }
 
-function setup(opts: { event?: unknown; link?: unknown; remoteItems?: unknown[] } = {}) {
+function setup(
+  opts: {
+    event?: unknown;
+    link?: unknown;
+    remoteItems?: unknown[];
+    source?: unknown;
+    orphan?: unknown;
+  } = {},
+) {
   const api = {
     events: {
       insert: jest
@@ -70,12 +78,17 @@ function setup(opts: { event?: unknown; link?: unknown; remoteItems?: unknown[] 
   const prisma = {
     calendarEvent: {
       findUnique: jest.fn().mockResolvedValue(opts.event ?? null),
+      findFirst: jest.fn().mockResolvedValue(opts.orphan ?? null),
       create: jest
         .fn()
         .mockImplementation(({ data }: { data: Record<string, unknown> }) =>
           Promise.resolve({ id: 'ev-imported', updatedAt: T0, ...data }),
         ),
-      update: jest.fn().mockResolvedValue({ updatedAt: T0 }),
+      update: jest
+        .fn()
+        .mockImplementation(({ where }: { where: { id: string } }) =>
+          Promise.resolve({ id: where.id, updatedAt: T0, externalReadOnly: true }),
+        ),
     },
     task: { findUnique: jest.fn().mockResolvedValue(null) },
     googleEventLink: {
@@ -91,7 +104,7 @@ function setup(opts: { event?: unknown; link?: unknown; remoteItems?: unknown[] 
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     googleCalendarSource: {
-      findFirst: jest.fn().mockResolvedValue(TASKDY_SOURCE),
+      findFirst: jest.fn().mockResolvedValue(opts.source ?? TASKDY_SOURCE),
       update: jest.fn().mockResolvedValue({}),
     },
     googleCalendarConnection: { update: jest.fn().mockResolvedValue({}) },
@@ -224,6 +237,36 @@ describe('CalendarSyncService (google-calendar)', () => {
         expect.objectContaining({ create: expect.objectContaining({ readOnly: true }) }),
       );
     });
+
+    it('importado somente-leitura sem vínculo de origem: não vai para o calendário TaskDY', async () => {
+      const { service, api, prisma, ctx } = setup({
+        event: makeEvent({ companyId: null, externalReadOnly: true }),
+      });
+      await service.pushEvent(ctx, 'ev-1');
+      expect(api.events.insert).not.toHaveBeenCalled();
+      expect(prisma.googleEventLink.upsert).not.toHaveBeenCalled();
+    });
+
+    it('importado somente-leitura já copiado no calendário TaskDY: tira a cópia', async () => {
+      const link = {
+        id: 'l1',
+        googleEventId: 'g-copy',
+        origin: 'taskdy',
+        readOnly: true,
+        sourceId: TASKDY_SOURCE.id,
+        source: TASKDY_SOURCE,
+      };
+      const { service, api, prisma, ctx } = setup({
+        event: makeEvent({ companyId: null, externalReadOnly: true }),
+        link,
+      });
+      await service.pushEvent(ctx, 'ev-1', { force: true });
+      expect(api.events.delete).toHaveBeenCalledWith(
+        expect.objectContaining({ eventId: 'g-copy' }),
+      );
+      expect(prisma.googleEventLink.deleteMany).toHaveBeenCalledWith({ where: { id: 'l1' } });
+      expect(api.events.update).not.toHaveBeenCalled();
+    });
   });
 
   describe('pullSource', () => {
@@ -324,6 +367,40 @@ describe('CalendarSyncService (google-calendar)', () => {
       expect(prisma.googleEventLink.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ origin: 'google', calendarEventId: 'ev-imported' }),
+        }),
+      );
+    });
+
+    it('calendário só-leitura: evento órfão igual é reatado e colorido, não duplicado', async () => {
+      const holidays = {
+        ...TASKDY_SOURCE,
+        id: 'src-feriados',
+        googleCalendarId: 'pt-br.brazilian#holiday@group.v.calendar.google.com',
+        accessRole: 'reader',
+        isTaskdyCalendar: false,
+        color: '#0b8043',
+      };
+      const { service, prisma, api, ctx } = setup({
+        source: holidays,
+        orphan: { id: 'ev-orfao' },
+        remoteItems: [remote({ id: 'g-feriado' })],
+      });
+      await service.pullSource(ctx, holidays.id);
+      expect(prisma.calendarEvent.create).not.toHaveBeenCalled();
+      expect(prisma.calendarEvent.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'ev-orfao' },
+          data: expect.objectContaining({ color: '#0b8043', externalReadOnly: true }),
+        }),
+      );
+      expect(api.events.patch).not.toHaveBeenCalled(); // só-leitura: não marca taskdyId
+      expect(prisma.googleEventLink.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            origin: 'google',
+            sourceId: 'src-feriados',
+            calendarEventId: 'ev-orfao',
+          }),
         }),
       );
     });
