@@ -21,7 +21,8 @@ import { CalendarSyncEnqueuer } from './calendar-sync.enqueuer';
 import { GoogleApiClient, googleStatus } from './google-api.client';
 import { DEFAULT_TZ, googleCalendarColor, TASKDY_CALENDAR_MARKER } from './google-calendar-mapper';
 import { GoogleCalendarConfig, TASKDY_CALENDAR_SUMMARY } from './google-calendar.config';
-import { isWritableAccessRole } from './sync-rules';
+import { GoogleSyncSettingsService } from './google-sync-settings.service';
+import { isWritableAccessRole, SyncDirection } from './sync-rules';
 import { SyncEligibilityService } from './sync-eligibility.service';
 import { sha256 } from './token-crypto';
 
@@ -41,6 +42,8 @@ export interface GoogleCalendarStatus {
   enabled: boolean;
   allowed: boolean;
   canConnect: boolean;
+  /** Direção global definida pelo superusuário. */
+  direction: SyncDirection;
   connection: {
     status: string;
     googleEmail: string;
@@ -74,6 +77,7 @@ export class GoogleCalendarConnectionService {
     private readonly enqueuer: CalendarSyncEnqueuer,
     private readonly notificacao: NotificacaoService,
     private readonly jwt: JwtService,
+    private readonly settings: GoogleSyncSettingsService,
     config: ConfigService,
     @InjectPinoLogger(GoogleCalendarConnectionService.name)
     private readonly logger: PinoLogger,
@@ -248,18 +252,20 @@ export class GoogleCalendarConnectionService {
   // ── Status / calendários ───────────────────────────────────────────────────────
 
   async getStatus(userId: string, email: string): Promise<GoogleCalendarStatus> {
-    const [conn, elig] = await Promise.all([
+    const [conn, elig, direction] = await Promise.all([
       this.prisma.googleCalendarConnection.findUnique({
         where: { userId },
         include: { sources: { orderBy: [{ isTaskdyCalendar: 'desc' }, { summary: 'asc' }] } },
       }),
       this.eligibility.forUser(userId),
+      this.settings.getDirection(),
     ]);
     const active = conn?.status === 'active';
     return {
       enabled: this.cfg.enabled,
       allowed: this.cfg.isAllowed(email),
       canConnect: elig.eligibleIds.size > 0,
+      direction,
       connection: conn
         ? {
             status: conn.status,

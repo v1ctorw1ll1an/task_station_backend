@@ -1,5 +1,7 @@
 import {
   decideRemoteChange,
+  isPullAllowed,
+  isPushAllowed,
   isWritableAccessRole,
   nextRetryDelayMs,
   RemoteChangeInput,
@@ -86,6 +88,52 @@ describe('sync-rules (google-calendar)', () => {
           }),
         ),
       ).toBe('apply_remote');
+    });
+
+    describe('direção única', () => {
+      const conflictLocalWins = {
+        localUpdatedAt: t('2026-10-01T12:00:00Z'),
+        linkLocalUpdatedAt: t('2026-10-01T09:00:00Z'),
+        remoteUpdated: t('2026-10-01T11:00:00Z'),
+      };
+
+      it('sem direção informada vale "ambos" (comportamento anterior)', () => {
+        expect(decideRemoteChange(input(conflictLocalWins))).toBe('push_local');
+      });
+
+      it('só Google → TaskDY: o Google vence mesmo com o TaskDY editado por último', () => {
+        expect(
+          decideRemoteChange(input({ ...conflictLocalWins, direction: 'google_to_app' })),
+        ).toBe('apply_remote');
+      });
+
+      it('só Google → TaskDY: cópia somente-leitura é ignorada, não revertida', () => {
+        expect(decideRemoteChange(input({ readOnly: true, direction: 'google_to_app' }))).toBe(
+          'ignore_direction',
+        );
+      });
+
+      it('só TaskDY → Google: qualquer edição no Google é revertida', () => {
+        expect(decideRemoteChange(input({ direction: 'app_to_google' }))).toBe('revert');
+      });
+
+      it('eco e congelamento continuam valendo em qualquer direção', () => {
+        for (const direction of ['google_to_app', 'app_to_google'] as const) {
+          expect(decideRemoteChange(input({ remoteEtag: '"1"', direction }))).toBe('echo');
+          expect(decideRemoteChange(input({ frozen: true, direction }))).toBe('ignore_frozen');
+        }
+      });
+    });
+  });
+
+  describe('isPushAllowed / isPullAllowed', () => {
+    it.each([
+      ['both', true, true],
+      ['google_to_app', false, true],
+      ['app_to_google', true, false],
+    ] as const)('%s → push=%s, pull=%s', (direction, push, pull) => {
+      expect(isPushAllowed(direction)).toBe(push);
+      expect(isPullAllowed(direction)).toBe(pull);
     });
   });
 

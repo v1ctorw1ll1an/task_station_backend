@@ -28,7 +28,15 @@ import {
 } from './google-calendar-mapper';
 import { GoogleCalendarConnectionService } from './google-calendar-connection.service';
 import { BACKFILL_PAST_DAYS, GoogleCalendarConfig } from './google-calendar.config';
-import { decideRemoteChange, isWritableAccessRole, shouldPush } from './sync-rules';
+import { GoogleSyncSettingsService } from './google-sync-settings.service';
+import {
+  decideRemoteChange,
+  isPullAllowed,
+  isPushAllowed,
+  isWritableAccessRole,
+  shouldPush,
+  SyncDirection,
+} from './sync-rules';
 import {
   isItemSyncable,
   SyncEligibilityService,
@@ -42,6 +50,8 @@ interface SyncContext {
   conn: GoogleCalendarConnection;
   api: calendar_v3.Calendar;
   elig: UserEligibility;
+  /** Lida uma vez por job: troca no meio só vale para o próximo. */
+  direction: SyncDirection;
 }
 
 type LinkWithSource = GoogleEventLink & { source: GoogleCalendarSource };
@@ -68,6 +78,10 @@ type EventRow = Prisma.CalendarEventGetPayload<{ include: typeof eventInclude }>
  *   (cria, atualiza ou remove — um único job cobre as três).
  * - pull: aplica as mudanças do Google (syncToken) com as regras de conflito (Q8),
  *   elegibilidade (Q17/Q18) e somente-leitura (Q7/Q10).
+ *
+ * A direção global (painel do superusuário) corta um dos lados: só Google → TaskDY
+ * nunca escreve no Google; só TaskDY → Google não deixa o Google mudar o TaskDY —
+ * edição em cópia do TaskDY é revertida e evento nativo do Google é ignorado.
  */
 @Injectable()
 export class CalendarSyncService {
@@ -79,6 +93,7 @@ export class CalendarSyncService {
     private readonly eligibility: SyncEligibilityService,
     private readonly enqueuer: CalendarSyncEnqueuer,
     private readonly connections: GoogleCalendarConnectionService,
+    private readonly settings: GoogleSyncSettingsService,
     config: ConfigService,
     @InjectPinoLogger(CalendarSyncService.name)
     private readonly logger: PinoLogger,
@@ -117,12 +132,14 @@ export class CalendarSyncService {
       conn,
       api: this.google.calendarFor(conn),
       elig: await this.eligibility.forUser(userId),
+      direction: await this.settings.getDirection(),
     };
   }
 
   // ── Push: evento ───────────────────────────────────────────────────────────────
 
   async pushEvent(ctx: SyncContext, eventId: string, opts: PushOptions = {}): Promise<void> {
+    if (!isPushAllowed(ctx.direction)) return; // só Google → TaskDY: o Google fica como está
     const { conn, elig } = ctx;
     const userId = conn.userId;
     const ev = await this.prisma.calendarEvent.findUnique({
@@ -299,6 +316,7 @@ export class CalendarSyncService {
   // ── Push: tarefa ───────────────────────────────────────────────────────────────
 
   async pushTask(ctx: SyncContext, taskId: string, opts: PushOptions = {}): Promise<void> {
+    if (!isPushAllowed(ctx.direction)) return;
     const { conn, elig } = ctx;
     const userId = conn.userId;
     const task = await this.prisma.task.findUnique({
@@ -539,6 +557,9 @@ export class CalendarSyncService {
       where: { id: sourceId, connectionId: ctx.conn.id },
     });
     if (!source || (!source.isTaskdyCalendar && !source.importEnabled)) return null;
+    // Só TaskDY → Google: calendário importado só traria o que será ignorado. O
+    // "TaskDY" continua sendo lido para desfazer edições feitas nele pelo Google.
+    if (!source.isTaskdyCalendar && !isPullAllowed(ctx.direction)) return null;
 
     let listed: { items: GoogleEvent[]; nextSyncToken: string | null };
     try {
@@ -806,6 +827,7 @@ export class CalendarSyncService {
   /** Evento criado no Google → evento pessoal do usuário (Q5). */
   private async importNew(ctx: SyncContext, source: GoogleCalendarSource, g: GoogleEvent) {
     if (g.status === 'cancelled') return;
+    if (!isPullAllowed(ctx.direction)) return; // só TaskDY → Google: nada entra
     if (!ctx.elig.personalAllowed) return; // congelado: o full resync diário pega depois
     const mapping = googleToEventData(g, source.timeZone);
     if (!mapping) return;
@@ -939,6 +961,7 @@ export class CalendarSyncService {
   /** Tarefa é somente-leitura no Google: qualquer mudança lá é desfeita (Q2). */
   private async applyRemoteTask(ctx: SyncContext, link: LinkWithSource, g: GoogleEvent) {
     if (!link.taskId) return;
+    if (!isPushAllowed(ctx.direction)) return; // desfazer exige escrever no Google
     const cancelled = g.status === 'cancelled';
     if (!cancelled && g.etag && g.etag === link.etag) return;
     await this.pushTask(ctx, link.taskId, { force: true, recreate: cancelled });
@@ -964,15 +987,26 @@ export class CalendarSyncService {
     }
 
     const frozen = !(await this.stillSyncable(ctx, eventCompanyId(ev)));
+    const pullAllowed = isPullAllowed(ctx.direction);
+    // Só TaskDY → Google: evento nativo do Google não é revertido nem aplicado — o
+    // Google segue sendo dele; se sumiu de lá, só o vínculo sai.
+    if (!pullAllowed && link.origin === 'google') {
+      if (g.status === 'cancelled') {
+        await this.prisma.googleEventLink.delete({ where: { id: link.id } });
+      }
+      return;
+    }
     // Quem não é dono nunca edita pelo Google, qualquer que seja a origem do vínculo.
     // Evento de origem Google do próprio dono: o Google é a fonte.
     const readOnly =
-      ev.ownerId !== userId || (link.origin === 'taskdy' && (link.readOnly || ev.externalReadOnly));
+      !pullAllowed ||
+      ev.ownerId !== userId ||
+      (link.origin === 'taskdy' && (link.readOnly || ev.externalReadOnly));
 
     if (g.status === 'cancelled') {
       if (frozen) return;
       if (readOnly) {
-        if (link.origin === 'taskdy') {
+        if (link.origin === 'taskdy' && isPushAllowed(ctx.direction)) {
           await this.pushEvent(ctx, eventId, { force: true, recreate: true });
         } else {
           await this.prisma.googleEventLink.delete({ where: { id: link.id } });
@@ -997,8 +1031,11 @@ export class CalendarSyncService {
       localUpdatedAt: ev.updatedAt,
       linkLocalUpdatedAt: link.localUpdatedAt,
       remoteUpdated: g.updated ? new Date(g.updated) : null,
+      direction: ctx.direction,
     });
-    if (decision === 'echo' || decision === 'ignore_frozen') return;
+    if (decision === 'echo' || decision === 'ignore_frozen' || decision === 'ignore_direction') {
+      return;
+    }
     if (decision === 'revert' || decision === 'push_local') {
       await this.pushEvent(ctx, eventId, { force: true });
       return;
@@ -1007,7 +1044,8 @@ export class CalendarSyncService {
     const mapping = googleToEventData(g, source.timeZone);
     if (!mapping) return;
     if (!mapping.mappable && link.origin === 'taskdy') {
-      // Recorrência que o TaskDY não representa num evento dele: mantém a versão local.
+      // Recorrência que o TaskDY não representa num evento dele: mantém a versão local
+      // (só Google → TaskDY: o push é ignorado e a local fica como está).
       await this.pushEvent(ctx, eventId, { force: true });
       return;
     }
@@ -1095,11 +1133,16 @@ export class CalendarSyncService {
     );
     if (sameException(current, data)) return; // eco do nosso próprio push
 
+    if (!isPullAllowed(ctx.direction) && link.origin === 'google') return;
     const readOnly =
+      !isPullAllowed(ctx.direction) ||
       ev.ownerId !== ctx.conn.userId ||
       (link.origin === 'taskdy' && (link.readOnly || ev.externalReadOnly));
     if (readOnly) {
-      await this.revertInstance(ctx, source, link.googleEventId, g, ev, current);
+      // Desfazer escreve no Google: só Google → TaskDY apenas ignora.
+      if (isPushAllowed(ctx.direction)) {
+        await this.revertInstance(ctx, source, link.googleEventId, g, ev, current);
+      }
       return;
     }
 

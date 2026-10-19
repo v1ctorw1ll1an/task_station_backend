@@ -1,6 +1,7 @@
 import * as dotenv from 'dotenv';
 import { CalendarSyncWorker } from '../src/google-calendar/calendar-sync.worker';
 import { CalendarSyncEnqueuer } from '../src/google-calendar/calendar-sync.enqueuer';
+import { GoogleSyncSettingsService } from '../src/google-calendar/google-sync-settings.service';
 import { EventoRepository } from '../src/evento/evento.repository';
 import { PrismaService } from '../src/prisma/prisma.service';
 
@@ -27,13 +28,20 @@ const enabledConfig = {
 describe('Google Agenda — outbox e agenda (e2e — banco real)', () => {
   let prisma: PrismaService;
   let enqueuer: CalendarSyncEnqueuer;
+  let settings: GoogleSyncSettingsService;
+  let previousSettings: { syncDirection: 'both' | 'google_to_app' | 'app_to_google' } | null;
   let userId: string;
   const companyIds: string[] = [];
 
   beforeAll(async () => {
     prisma = new PrismaService();
     await prisma.$connect();
-    enqueuer = new CalendarSyncEnqueuer(prisma, enabledConfig as never, logger as never);
+    settings = new GoogleSyncSettingsService(prisma);
+    previousSettings = await prisma.googleCalendarSettings.findUnique({
+      where: { id: 'global' },
+      select: { syncDirection: true },
+    });
+    enqueuer = new CalendarSyncEnqueuer(prisma, settings, enabledConfig as never, logger as never);
     const suffix = `${Date.now()}`;
     const user = await prisma.user.create({
       data: {
@@ -53,7 +61,17 @@ describe('Google Agenda — outbox e agenda (e2e — banco real)', () => {
   });
 
   afterAll(async () => {
+    // Banco compartilhado com o dev: devolve a direção como estava.
+    if (previousSettings) {
+      await prisma.googleCalendarSettings.update({
+        where: { id: 'global' },
+        data: { syncDirection: previousSettings.syncDirection },
+      });
+    } else {
+      await prisma.googleCalendarSettings.deleteMany({ where: { id: 'global' } });
+    }
     await prisma.calendarSyncJob.deleteMany({ where: { userId } });
+    await prisma.googleCalendarConnection.deleteMany({ where: { userId } });
     await prisma.calendarEvent.deleteMany({ where: { ownerId: userId } });
     await prisma.company.deleteMany({ where: { id: { in: companyIds } } });
     await prisma.user.delete({ where: { id: userId } }).catch(() => {});
@@ -147,5 +165,34 @@ describe('Google Agenda — outbox e agenda (e2e — banco real)', () => {
       { companyId: companyIds[0] },
     );
     expect(found.map((e) => e.title).sort()).toEqual(['da empresa 1', 'pessoal']);
+  });
+
+  it('só Google → TaskDY: mutação local não vira job; de volta a "ambos", vira', async () => {
+    await prisma.googleCalendarConnection.create({
+      data: {
+        userId,
+        googleAccountId: `e2e-${userId}`,
+        googleEmail: 'e2e@gmail.com',
+        refreshTokenEnc: 'x',
+      },
+    });
+    const ev = await prisma.calendarEvent.create({
+      data: {
+        ownerId: userId,
+        title: 'direção',
+        startsAt: new Date('2026-10-05T13:00:00Z'),
+        endsAt: new Date('2026-10-05T14:00:00Z'),
+      },
+    });
+
+    await settings.setDirection('google_to_app', userId);
+    await enqueuer.enqueueForEvent(ev.id);
+    expect(await prisma.calendarSyncJob.count({ where: { userId } })).toBe(0);
+
+    await settings.setDirection('both', userId);
+    await enqueuer.enqueueForEvent(ev.id);
+    expect(
+      await prisma.calendarSyncJob.count({ where: { userId, kind: 'push_event', refId: ev.id } }),
+    ).toBe(1);
   });
 });

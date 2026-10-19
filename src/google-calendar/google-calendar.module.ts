@@ -10,6 +10,9 @@ import { CalendarSyncWorker } from './calendar-sync.worker';
 import { GoogleApiClient } from './google-api.client';
 import { GoogleCalendarConnectionService } from './google-calendar-connection.service';
 import { GoogleCalendarController } from './google-calendar.controller';
+import { GoogleSyncAdminController } from './google-sync-admin.controller';
+import { GoogleSyncAdminService } from './google-sync-admin.service';
+import { GoogleSyncSettingsService } from './google-sync-settings.service';
 import { GoogleWebhookController } from './google-webhook.controller';
 import { SyncEligibilityService } from './sync-eligibility.service';
 
@@ -31,9 +34,11 @@ import { SyncEligibilityService } from './sync-eligibility.service';
       }),
     }),
   ],
-  controllers: [GoogleCalendarController, GoogleWebhookController],
+  controllers: [GoogleCalendarController, GoogleWebhookController, GoogleSyncAdminController],
   providers: [
     GoogleApiClient,
+    GoogleSyncSettingsService,
+    GoogleSyncAdminService,
     SyncEligibilityService,
     CalendarSyncEnqueuer,
     GoogleCalendarConnectionService,

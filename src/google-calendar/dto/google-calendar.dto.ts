@@ -3,12 +3,14 @@ import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
+  IsIn,
   IsString,
   IsUUID,
   MaxLength,
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import { SYNC_DIRECTIONS, SyncDirection } from '../sync-rules';
 
 export class CompleteGoogleConnectDto {
   @IsString()
@@ -36,4 +38,9 @@ export class UpdateGoogleSourcesDto {
   @ValidateNested({ each: true })
   @Type(() => SourceToggleDto)
   sources: SourceToggleDto[];
+}
+
+export class UpdateGoogleSyncDirectionDto {
+  @IsIn(SYNC_DIRECTIONS)
+  direction: SyncDirection;
 }

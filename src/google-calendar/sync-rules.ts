@@ -2,6 +2,25 @@
  * Regras puras da sincronização — sem Prisma nem Google, para testar sem mock.
  */
 
+/** Para onde a sincronização corre (controle global do superusuário). */
+export type SyncDirection = 'both' | 'google_to_app' | 'app_to_google';
+
+export const SYNC_DIRECTIONS: readonly SyncDirection[] = [
+  'both',
+  'google_to_app',
+  'app_to_google',
+] as const;
+
+/** O TaskDY escreve no Google (criar, atualizar, reverter, remover cópias)? */
+export function isPushAllowed(direction: SyncDirection): boolean {
+  return direction !== 'google_to_app';
+}
+
+/** Mudanças feitas no Google entram no TaskDY? */
+export function isPullAllowed(direction: SyncDirection): boolean {
+  return direction !== 'app_to_google';
+}
+
 export type RemoteDecision =
   /** A mudança é o nosso próprio push voltando (mesmo etag). */
   | 'echo'
@@ -12,7 +31,9 @@ export type RemoteDecision =
   /** Conflito e o TaskDY editou por último: reenvia o local por cima (Q8). */
   | 'push_local'
   /** Aplica a mudança do Google no TaskDY. */
-  | 'apply_remote';
+  | 'apply_remote'
+  /** Só Google → TaskDY e a cópia não pode mudar aqui: nada a fazer (nem reverter). */
+  | 'ignore_direction';
 
 export interface RemoteChangeInput {
   remoteEtag: string | null | undefined;
@@ -24,16 +45,25 @@ export interface RemoteChangeInput {
   linkLocalUpdatedAt: Date | null;
   /** `updated` do evento no Google. */
   remoteUpdated: Date | null;
+  /** Ausente = 'both'. */
+  direction?: SyncDirection;
 }
 
 /**
  * Última edição vence (Q8): só há conflito quando os dois lados mudaram desde o
  * último sync; aí compara `updatedAt` do TaskDY com `updated` do Google.
+ *
+ * Direção única: só TaskDY → Google trata toda cópia como somente-leitura (reverte);
+ * só Google → TaskDY nunca escreve no Google — aplica o remoto ou ignora.
  */
 export function decideRemoteChange(i: RemoteChangeInput): RemoteDecision {
+  const direction = i.direction ?? 'both';
   if (i.remoteEtag && i.linkEtag && i.remoteEtag === i.linkEtag) return 'echo';
   if (i.frozen) return 'ignore_frozen';
-  if (i.readOnly) return 'revert';
+  if (i.readOnly || !isPullAllowed(direction)) {
+    return isPushAllowed(direction) ? 'revert' : 'ignore_direction';
+  }
+  if (!isPushAllowed(direction)) return 'apply_remote';
   const localChanged =
     !i.linkLocalUpdatedAt || i.localUpdatedAt.getTime() > i.linkLocalUpdatedAt.getTime();
   if (localChanged && i.remoteUpdated && i.localUpdatedAt.getTime() > i.remoteUpdated.getTime()) {

@@ -2,6 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import { CalendarSyncService } from './calendar-sync.service';
 import { PRIVATE_ID_KEY, PRIVATE_KIND_KEY } from './google-calendar-mapper';
 import { UserEligibility } from './sync-eligibility.service';
+import { SyncDirection } from './sync-rules';
 
 const USER = 'user-1';
 const CONN = { id: 'conn-1', userId: USER, status: 'active', refreshTokenEnc: 'x' };
@@ -48,6 +49,7 @@ function setup(
     remoteItems?: unknown[];
     source?: unknown;
     orphan?: unknown;
+    direction?: SyncDirection;
   } = {},
 ) {
   const api = {
@@ -122,12 +124,15 @@ function setup(
   const eligibility = {
     isCompanyEligible: jest.fn((id: string) => Promise.resolve(id === 'co-ok')),
   };
+  const direction = opts.direction ?? 'both';
+  const settings = { getDirection: jest.fn().mockResolvedValue(direction) };
   const service = new CalendarSyncService(
     prisma as never,
     google as never,
     eligibility as never,
     enqueuer as never,
     connections as never,
+    settings as never,
     config as unknown as ConfigService,
     logger as never,
   );
@@ -136,7 +141,7 @@ function setup(
     eligibleIds: new Set(['co-ok']),
     personalAllowed: true,
   };
-  const ctx = { conn: CONN as never, api: api as never, elig };
+  const ctx = { conn: CONN as never, api: api as never, elig, direction };
   return { service, prisma, api, enqueuer, ctx, eligibility };
 }
 
@@ -564,6 +569,273 @@ describe('CalendarSyncService (google-calendar)', () => {
       await service.pushTask(ctx, 't-1');
       expect(api.events.insert).not.toHaveBeenCalled();
       expect(api.events.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('direção da sincronização (controle do superusuário)', () => {
+    const taskdyLink = {
+      id: 'l1',
+      kind: 'event',
+      googleEventId: 'g-1',
+      calendarEventId: 'ev-1',
+      origin: 'taskdy',
+      readOnly: false,
+      etag: '"e1"',
+      localUpdatedAt: new Date('2026-09-01T00:00:00Z'),
+      sourceId: TASKDY_SOURCE.id,
+      source: TASKDY_SOURCE,
+    };
+    const IMPORTED_SOURCE = {
+      ...TASKDY_SOURCE,
+      id: 'src-pessoal',
+      googleCalendarId: 'pessoal@gmail.com',
+      isTaskdyCalendar: false,
+    };
+    const googleLink = {
+      ...taskdyLink,
+      origin: 'google',
+      sourceId: IMPORTED_SOURCE.id,
+      source: IMPORTED_SOURCE,
+    };
+    const remote = (over: Record<string, unknown> = {}) => ({
+      id: 'g-1',
+      etag: '"e9"',
+      updated: '2026-10-02T00:00:00Z',
+      summary: 'Editado no Google',
+      start: { dateTime: '2026-10-05T10:00:00-03:00', timeZone: 'America/Sao_Paulo' },
+      end: { dateTime: '2026-10-05T11:00:00-03:00', timeZone: 'America/Sao_Paulo' },
+      ...over,
+    });
+    const task = {
+      id: 't-1',
+      title: 'Prazo',
+      deletedAt: null,
+      startDate: null,
+      dueDate: new Date('2026-10-10T20:00:00Z'),
+      allDay: false,
+      timezone: 'America/Sao_Paulo',
+      updatedAt: T0,
+      column: { isDone: false },
+      project: {
+        id: 'p',
+        workspaceId: 'w',
+        deletedAt: null,
+        workspace: { companyId: 'co-ok', deletedAt: null },
+      },
+      taskAssignees: [{ userId: USER }],
+    };
+
+    describe('só Google → TaskDY', () => {
+      it('evento novo do TaskDY não é enviado ao Google', async () => {
+        const { service, api, prisma, ctx } = setup({
+          event: makeEvent(),
+          direction: 'google_to_app',
+        });
+        await service.pushEvent(ctx, 'ev-1');
+        expect(api.events.list).not.toHaveBeenCalled();
+        expect(api.events.insert).not.toHaveBeenCalled();
+        expect(prisma.googleEventLink.upsert).not.toHaveBeenCalled();
+      });
+
+      it('evento excluído no TaskDY não apaga a cópia do Google', async () => {
+        const { service, api, ctx } = setup({
+          event: makeEvent({ deletedAt: T0 }),
+          link: taskdyLink,
+          direction: 'google_to_app',
+        });
+        await service.pushEvent(ctx, 'ev-1');
+        expect(api.events.delete).not.toHaveBeenCalled();
+      });
+
+      it('tarefa com prazo não vai para o Google', async () => {
+        const { service, api, prisma, ctx } = setup({ direction: 'google_to_app' });
+        prisma.task.findUnique.mockResolvedValue(task);
+        await service.pushTask(ctx, 't-1');
+        expect(api.events.insert).not.toHaveBeenCalled();
+        expect(api.events.update).not.toHaveBeenCalled();
+      });
+
+      it('evento criado no Google continua sendo importado', async () => {
+        const { service, prisma, ctx } = setup({
+          remoteItems: [remote({ id: 'g-new' })],
+          direction: 'google_to_app',
+        });
+        await service.pullSource(ctx, TASKDY_SOURCE.id);
+        expect(prisma.calendarEvent.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ ownerId: USER, title: 'Editado no Google' }),
+          }),
+        );
+      });
+
+      it('conflito com o TaskDY editado por último: o Google vence', async () => {
+        const { service, prisma, api, ctx } = setup({
+          event: makeEvent({ updatedAt: new Date('2026-10-03T00:00:00Z') }),
+          link: taskdyLink,
+          remoteItems: [remote()],
+          direction: 'google_to_app',
+        });
+        await service.pullSource(ctx, TASKDY_SOURCE.id);
+        expect(prisma.calendarEvent.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ title: 'Editado no Google' }),
+          }),
+        );
+        expect(api.events.update).not.toHaveBeenCalled();
+      });
+
+      it('edição de convidado no Google: não aplica e não reverte', async () => {
+        const { service, prisma, api, ctx } = setup({
+          event: makeEvent({ ownerId: 'outro', attendees: [{ userId: USER, status: 'accepted' }] }),
+          link: { ...taskdyLink, readOnly: true },
+          remoteItems: [remote()],
+          direction: 'google_to_app',
+        });
+        await service.pullSource(ctx, TASKDY_SOURCE.id);
+        expect(prisma.calendarEvent.update).not.toHaveBeenCalled();
+        expect(api.events.update).not.toHaveBeenCalled();
+      });
+
+      it('cópia somente-leitura apagada no Google: solta o vínculo sem recriar', async () => {
+        const { service, prisma, api, ctx } = setup({
+          event: makeEvent({ ownerId: 'outro', attendees: [{ userId: USER, status: 'accepted' }] }),
+          link: { ...taskdyLink, readOnly: true },
+          remoteItems: [{ id: 'g-1', status: 'cancelled' }],
+          direction: 'google_to_app',
+        });
+        await service.pullSource(ctx, TASKDY_SOURCE.id);
+        expect(prisma.googleEventLink.delete).toHaveBeenCalledWith({ where: { id: 'l1' } });
+        expect(api.events.insert).not.toHaveBeenCalled();
+        expect(prisma.calendarEvent.update).not.toHaveBeenCalled();
+      });
+
+      it('tarefa editada no Google não é desfeita', async () => {
+        const { service, prisma, api, ctx } = setup({
+          link: {
+            ...taskdyLink,
+            kind: 'task',
+            calendarEventId: null,
+            taskId: 't-1',
+            readOnly: true,
+          },
+          remoteItems: [remote()],
+          direction: 'google_to_app',
+        });
+        prisma.task.findUnique.mockResolvedValue(task);
+        await service.pullSource(ctx, TASKDY_SOURCE.id);
+        expect(api.events.update).not.toHaveBeenCalled();
+        expect(api.events.insert).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('só TaskDY → Google', () => {
+      it('evento do TaskDY continua sendo enviado', async () => {
+        const { service, api, ctx } = setup({ event: makeEvent(), direction: 'app_to_google' });
+        await service.pushEvent(ctx, 'ev-1');
+        expect(api.events.insert).toHaveBeenCalled();
+      });
+
+      it('evento criado no Google não é importado', async () => {
+        const { service, prisma, api, ctx } = setup({
+          remoteItems: [remote({ id: 'g-new' })],
+          direction: 'app_to_google',
+        });
+        await service.pullSource(ctx, TASKDY_SOURCE.id);
+        expect(prisma.calendarEvent.create).not.toHaveBeenCalled();
+        expect(api.events.patch).not.toHaveBeenCalled();
+      });
+
+      it('calendário importado nem é lido', async () => {
+        const { service, api, prisma, ctx } = setup({
+          source: IMPORTED_SOURCE,
+          direction: 'app_to_google',
+        });
+        expect(await service.pullSource(ctx, IMPORTED_SOURCE.id)).toBeNull();
+        expect(api.events.list).not.toHaveBeenCalled();
+        expect(prisma.googleCalendarSource.update).not.toHaveBeenCalled();
+      });
+
+      it('calendário TaskDY segue sendo lido (para desfazer edições)', async () => {
+        const { service, api, ctx } = setup({ direction: 'app_to_google' });
+        await service.pullSource(ctx, TASKDY_SOURCE.id);
+        expect(api.events.list).toHaveBeenCalledWith(
+          expect.objectContaining({ syncToken: 'tok-1' }),
+        );
+      });
+
+      it('dono editou a cópia no Google: reverte para a versão do TaskDY', async () => {
+        const { service, prisma, api, ctx } = setup({
+          event: makeEvent(),
+          link: { ...taskdyLink, localUpdatedAt: T0 },
+          remoteItems: [remote()],
+          direction: 'app_to_google',
+        });
+        await service.pullSource(ctx, TASKDY_SOURCE.id);
+        expect(prisma.calendarEvent.update).not.toHaveBeenCalled();
+        expect(api.events.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            eventId: 'g-1',
+            requestBody: expect.objectContaining({ summary: 'Reunião' }),
+          }),
+          { headers: undefined },
+        );
+      });
+
+      it('dono apagou a cópia no Google: recria, não apaga no TaskDY', async () => {
+        const { service, prisma, api, ctx } = setup({
+          event: makeEvent(),
+          link: { ...taskdyLink, localUpdatedAt: T0 },
+          remoteItems: [{ id: 'g-1', status: 'cancelled' }],
+          direction: 'app_to_google',
+        });
+        await service.pullSource(ctx, TASKDY_SOURCE.id);
+        expect(prisma.calendarEvent.update).not.toHaveBeenCalled();
+        expect(api.events.insert).toHaveBeenCalled();
+      });
+
+      it('evento nativo do Google editado lá: nem aplica nem reverte', async () => {
+        const { service, prisma, api, ctx } = setup({
+          event: makeEvent(),
+          link: { ...googleLink, localUpdatedAt: T0 },
+          remoteItems: [remote()],
+          direction: 'app_to_google',
+        });
+        await service.pullSource(ctx, TASKDY_SOURCE.id);
+        expect(prisma.calendarEvent.update).not.toHaveBeenCalled();
+        expect(api.events.update).not.toHaveBeenCalled();
+        expect(api.events.patch).not.toHaveBeenCalled();
+      });
+
+      it('evento nativo do Google apagado lá: só solta o vínculo', async () => {
+        const { service, prisma, ctx } = setup({
+          event: makeEvent(),
+          link: googleLink,
+          remoteItems: [{ id: 'g-1', status: 'cancelled' }],
+          direction: 'app_to_google',
+        });
+        await service.pullSource(ctx, TASKDY_SOURCE.id);
+        expect(prisma.calendarEvent.update).not.toHaveBeenCalled();
+        expect(prisma.googleEventLink.delete).toHaveBeenCalledWith({ where: { id: 'l1' } });
+      });
+    });
+
+    it('runJob lê a direção da configuração global', async () => {
+      const { service, api, prisma, eligibility } = setup({
+        event: makeEvent(),
+        direction: 'google_to_app',
+      });
+      Object.assign(prisma.googleCalendarConnection, {
+        findUnique: jest.fn().mockResolvedValue(CONN),
+      });
+      Object.assign(eligibility, {
+        forUser: jest.fn().mockResolvedValue({
+          companies: [],
+          eligibleIds: new Set(['co-ok']),
+          personalAllowed: true,
+        }),
+      });
+      await service.runJob({ userId: USER, kind: 'push_event', refId: 'ev-1' });
+      expect(api.events.insert).not.toHaveBeenCalled();
     });
   });
 });

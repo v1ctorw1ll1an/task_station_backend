@@ -180,32 +180,33 @@ model User {
   updatedAt         DateTime  @updatedAt @map("updated_at")
   deletedAt         DateTime? @map("deleted_at")
 
-  createdCompanies    Company[]                 @relation("CompanyCreatedBy")
-  createdWorkspaces   Workspace[]               @relation("WorkspaceCreatedBy")
-  createdProjects     Project[]                 @relation("ProjectCreatedBy")
-  reportedTasks       Task[]                    @relation("TaskReporter")
-  taskAssignments     TaskAssignee[]
-  createdTasks        Task[]                    @relation("TaskCreatedBy")
-  taskSessions        TaskSession[]
-  memberships         Membership[]
-  projectRestrictions ProjectRestriction[]
-  passwordResetTokens PasswordResetToken[]
-  taskHistories       TaskHistory[]
-  taskComments        TaskComment[]
-  taskAttachments     TaskAttachment[]
-  notifications       Notification[]            @relation("UserNotifications")
-  triggeredNotifs     Notification[]            @relation("NotificationActors")
-  notifPreference     NotificationPreference?
-  workspaceOrders     UserWorkspaceOrder[]
-  projectOrders       UserProjectOrder[]
-  taskChecklists      TaskChecklist[]
-  stickyNotes         StickyNote[]
-  ownedEvents         CalendarEvent[]           @relation("CalendarEventOwner")
-  eventAttendees      CalendarEventAttendee[]
-  invitedTaskGuests   TaskGuest[]               @relation("TaskGuestInvitedBy")
-  sentInvites         CompanyInvite[]           @relation("CompanyInviteInvitedBy")
-  acceptedInvites     CompanyInvite[]           @relation("CompanyInviteAcceptedBy")
-  googleCalendar      GoogleCalendarConnection?
+  createdCompanies              Company[]                 @relation("CompanyCreatedBy")
+  createdWorkspaces             Workspace[]               @relation("WorkspaceCreatedBy")
+  createdProjects               Project[]                 @relation("ProjectCreatedBy")
+  reportedTasks                 Task[]                    @relation("TaskReporter")
+  taskAssignments               TaskAssignee[]
+  createdTasks                  Task[]                    @relation("TaskCreatedBy")
+  taskSessions                  TaskSession[]
+  memberships                   Membership[]
+  projectRestrictions           ProjectRestriction[]
+  passwordResetTokens           PasswordResetToken[]
+  taskHistories                 TaskHistory[]
+  taskComments                  TaskComment[]
+  taskAttachments               TaskAttachment[]
+  notifications                 Notification[]            @relation("UserNotifications")
+  triggeredNotifs               Notification[]            @relation("NotificationActors")
+  notifPreference               NotificationPreference?
+  workspaceOrders               UserWorkspaceOrder[]
+  projectOrders                 UserProjectOrder[]
+  taskChecklists                TaskChecklist[]
+  stickyNotes                   StickyNote[]
+  ownedEvents                   CalendarEvent[]           @relation("CalendarEventOwner")
+  eventAttendees                CalendarEventAttendee[]
+  invitedTaskGuests             TaskGuest[]               @relation("TaskGuestInvitedBy")
+  sentInvites                   CompanyInvite[]           @relation("CompanyInviteInvitedBy")
+  acceptedInvites               CompanyInvite[]           @relation("CompanyInviteAcceptedBy")
+  googleCalendar                GoogleCalendarConnection?
+  googleCalendarSettingsUpdated GoogleCalendarSettings[]  @relation("GoogleCalendarSettingsUpdatedBy")
 
   @@index([deletedAt])
   @@map("users")
@@ -1032,6 +1033,27 @@ enum CalendarSyncJobKind {
   full_resync // backfill completo da conexão
 
   @@map("calendar_sync_job_kind")
+}
+
+// Para onde a sincronização corre — controle global do superusuário.
+enum GoogleSyncDirection {
+  both // Google ↔ TaskDY (padrão)
+  google_to_app // só Google → TaskDY: nada do TaskDY é enviado ao Google
+  app_to_google // só TaskDY → Google: mudanças feitas no Google não entram no TaskDY
+
+  @@map("google_sync_direction")
+}
+
+// Configuração global da integração: linha única (id = 'global').
+model GoogleCalendarSettings {
+  id            String              @id @default("global")
+  syncDirection GoogleSyncDirection @default(both) @map("sync_direction")
+  updatedById   String?             @map("updated_by_id")
+  updatedAt     DateTime            @updatedAt @map("updated_at")
+
+  updatedBy User? @relation("GoogleCalendarSettingsUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("google_calendar_settings")
 }
 
 // Uma conta Google por usuário (Q4). Desconectar apaga os tokens e marca `revoked`,

@@ -4,6 +4,8 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { CalendarSyncJobKind, Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { GoogleCalendarConfig } from './google-calendar.config';
+import { GoogleSyncSettingsService } from './google-sync-settings.service';
+import { isPushAllowed } from './sync-rules';
 
 /**
  * Porta de entrada dos ganchos de mutação (evento, tarefa, convidado): descobre quem
@@ -16,6 +18,7 @@ export class CalendarSyncEnqueuer {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly settings: GoogleSyncSettingsService,
     config: ConfigService,
     @InjectPinoLogger(CalendarSyncEnqueuer.name)
     private readonly logger: PinoLogger,
@@ -27,6 +30,7 @@ export class CalendarSyncEnqueuer {
   async enqueueForEvent(eventId: string): Promise<void> {
     if (!this.cfg.enabled) return;
     try {
+      if (!(await this.pushEnabled())) return;
       const [ev, links] = await Promise.all([
         this.prisma.calendarEvent.findUnique({
           where: { id: eventId },
@@ -52,6 +56,7 @@ export class CalendarSyncEnqueuer {
   async enqueueForTask(taskId: string): Promise<void> {
     if (!this.cfg.enabled) return;
     try {
+      if (!(await this.pushEnabled())) return;
       const [assignees, links] = await Promise.all([
         this.prisma.taskAssignee.findMany({ where: { taskId }, select: { userId: true } }),
         this.prisma.googleEventLink.findMany({
@@ -67,6 +72,14 @@ export class CalendarSyncEnqueuer {
     } catch (err) {
       this.logger.warn({ taskId, err: (err as Error).message }, 'Falha ao enfileirar tarefa');
     }
+  }
+
+  /**
+   * Só Google → TaskDY: mutação local não vira job. Ao religar o envio, o resync
+   * completo agendado pelo painel manda o que ficou para trás.
+   */
+  private async pushEnabled(): Promise<boolean> {
+    return isPushAllowed(await this.settings.getDirection());
   }
 
   private async enqueueForConnectedUsers(
