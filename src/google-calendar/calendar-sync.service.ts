@@ -19,6 +19,7 @@ import {
   GoogleEvent,
   GoogleInstanceOverride,
   googleInstanceToException,
+  googleEventColor,
   googleToEventData,
   PRIVATE_ID_KEY,
   PRIVATE_KIND_KEY,
@@ -809,6 +810,7 @@ export class CalendarSyncService {
         title: data.title,
         description: data.description,
         location: data.location,
+        color: googleEventColor(g, source.color),
         allDay: data.allDay,
         startsAt: data.startsAt,
         endsAt: data.endsAt,
@@ -998,6 +1000,8 @@ export class CalendarSyncService {
           ? computeRecurrenceEndAt(data.rrule, data.startsAt.toISOString(), data.timezone)
           : null,
         ...(link.origin === 'google' && {
+          // A cor de evento do Google é do Google; evento criado no TaskDY mantém a dele.
+          color: googleEventColor(g, source.color),
           externalReadOnly: !mapping.mappable || !isWritableAccessRole(source.accessRole),
         }),
       },

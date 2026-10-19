@@ -1,5 +1,7 @@
 import {
   eventToGoogle,
+  googleCalendarColor,
+  googleEventColor,
   googleInstanceToException,
   googleToEventData,
   instanceSuffix,
@@ -410,5 +412,26 @@ describe('google-calendar-mapper', () => {
       expect(taskToGoogle({ ...base, isDone: true }).summary).toBe('✓ Entregar relatório');
       expect(taskToGoogle(base).summary).toBe('Entregar relatório');
     });
+  });
+});
+
+describe('cores do Google', () => {
+  it('traduz a cor antiga do calendário para a da interface atual', () => {
+    expect(googleCalendarColor('#16A765')).toBe('#0b8043');
+  });
+
+  it('cor personalizada do calendário passa direto; inválida vira null', () => {
+    expect(googleCalendarColor('#123abc')).toBe('#123abc');
+    expect(googleCalendarColor('azul')).toBeNull();
+    expect(googleCalendarColor(undefined)).toBeNull();
+  });
+
+  it('colorId do evento vence a cor do calendário', () => {
+    expect(googleEventColor({ colorId: '11' }, '#0b8043')).toBe('#d50000');
+  });
+
+  it('sem colorId (ou desconhecido) usa a cor do calendário', () => {
+    expect(googleEventColor({}, '#0b8043')).toBe('#0b8043');
+    expect(googleEventColor({ colorId: '99' }, null)).toBeNull();
   });
 });

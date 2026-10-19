@@ -19,7 +19,7 @@ import { NotificacaoService } from '../notificacao/notificacao.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CalendarSyncEnqueuer } from './calendar-sync.enqueuer';
 import { GoogleApiClient, googleStatus } from './google-api.client';
-import { DEFAULT_TZ, TASKDY_CALENDAR_MARKER } from './google-calendar-mapper';
+import { DEFAULT_TZ, googleCalendarColor, TASKDY_CALENDAR_MARKER } from './google-calendar-mapper';
 import { GoogleCalendarConfig, TASKDY_CALENDAR_SUMMARY } from './google-calendar.config';
 import { isWritableAccessRole } from './sync-rules';
 import { SyncEligibilityService } from './sync-eligibility.service';
@@ -335,6 +335,13 @@ export class GoogleCalendarConnectionService {
       if (!cal.id) continue;
       seen.add(cal.id);
       const isTaskdy = cal.id === taskdyCalendarId;
+      const color = googleCalendarColor(cal.backgroundColor);
+      const before = await this.prisma.googleCalendarSource.findUnique({
+        where: {
+          connectionId_googleCalendarId: { connectionId: conn.id, googleCalendarId: cal.id },
+        },
+        select: { id: true, color: true },
+      });
       await this.prisma.googleCalendarSource.upsert({
         where: {
           connectionId_googleCalendarId: { connectionId: conn.id, googleCalendarId: cal.id },
@@ -347,6 +354,7 @@ export class GoogleCalendarConnectionService {
             : (cal.summaryOverride ?? cal.summary ?? cal.id),
           accessRole: cal.accessRole ?? 'reader',
           timeZone: cal.timeZone ?? null,
+          color,
           isTaskdyCalendar: isTaskdy,
           importEnabled: isTaskdy,
         },
@@ -356,10 +364,12 @@ export class GoogleCalendarConnectionService {
             : (cal.summaryOverride ?? cal.summary ?? cal.id),
           accessRole: cal.accessRole ?? 'reader',
           timeZone: cal.timeZone ?? null,
+          color,
           isTaskdyCalendar: isTaskdy,
           ...(isTaskdy ? { importEnabled: true } : {}),
         },
       });
+      if (before) await this.repaintImportedEvents(before.id, before.color, color);
     }
 
     // Calendário que sumiu da conta (removido/descadastrado): some da lista. Os
@@ -372,6 +382,33 @@ export class GoogleCalendarConnectionService {
       where: { connectionId: conn.id, OR: [{ isTaskdyCalendar: true }, { importEnabled: true }] },
     });
     for (const s of syncable) await this.ensureWatch(api, s);
+  }
+
+  /**
+   * Eventos importados do calendário que ainda estão com a cor dele (ou sem cor —
+   * importados antes de a cor existir) acompanham a troca de cor no Google. Evento
+   * com `colorId` próprio ou recolorido no TaskDY fica como está.
+   */
+  private async repaintImportedEvents(
+    sourceId: string,
+    oldColor: string | null,
+    newColor: string | null,
+  ): Promise<void> {
+    if (!newColor || oldColor === newColor) return;
+    const { count } = await this.prisma.calendarEvent.updateMany({
+      where: {
+        deletedAt: null,
+        OR: [{ color: null }, ...(oldColor ? [{ color: oldColor }] : [])],
+        googleLinks: { some: { sourceId, origin: 'google' } },
+      },
+      data: { color: newColor },
+    });
+    if (count > 0) {
+      this.logger.info(
+        { sourceId, count },
+        'Eventos importados recoloridos com a cor do calendário',
+      );
+    }
   }
 
   private async listCalendars(

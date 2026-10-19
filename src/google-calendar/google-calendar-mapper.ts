@@ -301,6 +301,68 @@ export function googleToEventData(
   };
 }
 
+// ── Cores ───────────────────────────────────────────────────────────────────────
+
+/**
+ * A API ainda devolve a paleta antiga (`colors.get`); a interface do Google mostra a
+ * atual. Traduz para a que o usuário vê. Chave = `colorId` do evento.
+ */
+const GOOGLE_EVENT_COLORS: Record<string, string> = {
+  '1': '#7986cb', // Lavanda
+  '2': '#33b679', // Sálvia
+  '3': '#8e24aa', // Uva
+  '4': '#e67c73', // Flamingo
+  '5': '#f6bf26', // Banana
+  '6': '#f4511e', // Tangerina
+  '7': '#039be5', // Pavão
+  '8': '#616161', // Grafite
+  '9': '#3f51b5', // Mirtilo
+  '10': '#0b8043', // Manjericão
+  '11': '#d50000', // Tomate
+};
+
+/** Cor de calendário: hex antigo da API (`backgroundColor`) → hex da interface atual. */
+const GOOGLE_CALENDAR_COLORS: Record<string, string> = {
+  '#ac725e': '#795548',
+  '#d06b64': '#e67c73',
+  '#f83a22': '#d50000',
+  '#fa573c': '#f4511e',
+  '#ff7537': '#ef6c00',
+  '#ffad46': '#f09300',
+  '#42d692': '#009688',
+  '#16a765': '#0b8043',
+  '#7bd148': '#7cb342',
+  '#b3dc6c': '#c0ca33',
+  '#fbe983': '#e4c441',
+  '#fad165': '#f6bf26',
+  '#92e1c0': '#33b679',
+  '#9fe1e7': '#039be5',
+  '#9fc6e7': '#4285f4',
+  '#4986e7': '#3f51b5',
+  '#9a9cff': '#7986cb',
+  '#b99aff': '#b39ddb',
+  '#c2c2c2': '#616161',
+  '#cabdbf': '#a79b8e',
+  '#cca6ac': '#ad1457',
+  '#f691b2': '#d81b60',
+  '#cd74e6': '#8e24aa',
+  '#a47ae2': '#9e69af',
+};
+
+const HEX_COLOR = /^#[0-9a-f]{6}$/;
+
+/** Cor do calendário como o Google mostra; cor personalizada passa direto. */
+export function googleCalendarColor(backgroundColor?: string | null): string | null {
+  const hex = backgroundColor?.trim().toLowerCase();
+  if (!hex || !HEX_COLOR.test(hex)) return null;
+  return GOOGLE_CALENDAR_COLORS[hex] ?? hex;
+}
+
+/** Cor própria do evento (`colorId`) ou, sem ela, a do calendário de origem. */
+export function googleEventColor(g: GoogleEvent, calendarColor: string | null): string | null {
+  return (g.colorId && GOOGLE_EVENT_COLORS[g.colorId]) || calendarColor;
+}
+
 /** Instância alterada/cancelada de uma série (`recurringEventId`) → exceção do TaskDY. */
 export function googleInstanceToException(
   g: GoogleEvent,

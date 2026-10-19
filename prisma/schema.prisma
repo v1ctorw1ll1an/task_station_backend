@@ -1069,6 +1069,8 @@ model GoogleCalendarSource {
   summary           String
   accessRole        String    @map("access_role")
   timeZone          String?   @map("time_zone")
+  // Cor do calendário como o Google mostra — pinta os eventos importados dele.
+  color             String?
   isTaskdyCalendar  Boolean   @default(false) @map("is_taskdy_calendar")
   importEnabled     Boolean   @default(false) @map("import_enabled")
   syncToken         String?   @map("sync_token")
