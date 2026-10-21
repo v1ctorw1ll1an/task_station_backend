@@ -58,6 +58,8 @@ export interface EventOccurrence {
   externalReadOnly: boolean;
   /** Evento importado do Google Agenda (selo na UI). */
   fromGoogle: boolean;
+  /** Escolha do dono: false = não vai para o Google Agenda dele. */
+  syncToGoogle: boolean;
 }
 
 @Injectable()
@@ -258,6 +260,7 @@ export class EventoService {
         // Somente-leitura externo só existe em evento importado — vale mesmo se o
         // vínculo com o calendário de origem caiu.
         fromGoogle: ev.googleLinks.length > 0 || ev.externalReadOnly,
+        syncToGoogle: ev.syncToGoogle,
       });
     }
     return result;
@@ -293,6 +296,7 @@ export class EventoService {
       rrule: dto.rrule ?? null,
       recurrenceEndAt,
       visibility: dto.visibility ?? EventVisibility.private,
+      syncToGoogle: dto.syncToGoogle ?? true,
       owner: { connect: { id: userId } },
       ...(dto.companyId ? { company: { connect: { id: dto.companyId } } } : {}),
       ...(dto.workspaceId ? { workspace: { connect: { id: dto.workspaceId } } } : {}),
@@ -366,8 +370,13 @@ export class EventoService {
         overrideStartsAt: dto.startsAt ? new Date(dto.startsAt) : null,
         overrideEndsAt: dto.endsAt ? new Date(dto.endsAt) : null,
       });
+      // Enviar ao Google é do evento, não da ocorrência: aplica na série mesmo aqui.
       // Exceção não mexe no updatedAt da série — tocamos para a sincronização perceber.
-      await this.repo.touch(id);
+      if (dto.syncToGoogle !== undefined && dto.syncToGoogle !== ev.syncToGoogle) {
+        await this.repo.update(id, { syncToGoogle: dto.syncToGoogle });
+      } else {
+        await this.repo.touch(id);
+      }
       await this.calendarSync.enqueueForEvent(id);
       const updated = await this.repo.findById(id);
       return updated as CalendarEventWithRelations;
@@ -400,6 +409,7 @@ export class EventoService {
           : null,
       }),
       ...(dto.visibility !== undefined && { visibility: dto.visibility }),
+      ...(dto.syncToGoogle !== undefined && { syncToGoogle: dto.syncToGoogle }),
       ...(dto.taskId !== undefined && {
         task: dto.taskId ? { connect: { id: dto.taskId } } : { disconnect: true },
       }),

@@ -87,6 +87,11 @@ export class UpdateEventDto {
   @Type(() => ReminderInputDto)
   reminders?: ReminderInputDto[];
 
+  /** false = não envia ao Google Agenda do dono. Vale para o evento todo (série inclusa). */
+  @IsOptional()
+  @IsBoolean()
+  syncToGoogle?: boolean;
+
   @IsOptional()
   @IsUUID('4')
   taskId?: string | null;

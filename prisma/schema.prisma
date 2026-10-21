@@ -691,6 +691,8 @@ model CalendarEvent {
   // Série que veio do Google e não tem tradução fiel (ou de calendário sem permissão
   // de escrita): o TaskDY mostra, mas só o Google edita.
   externalReadOnly Boolean         @default(false) @map("external_read_only")
+  // Escolha do dono ao criar: false = este evento não vai para o Google Agenda dele.
+  syncToGoogle     Boolean         @default(true) @map("sync_to_google")
   createdAt        DateTime        @default(now()) @map("created_at")
   updatedAt        DateTime        @updatedAt @map("updated_at")
   deletedAt        DateTime?       @map("deleted_at")

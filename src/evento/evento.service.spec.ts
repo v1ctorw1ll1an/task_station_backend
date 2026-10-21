@@ -104,6 +104,7 @@ function makeEvent(
     exceptions: [],
     guestEmails: [],
     googleLinks: [],
+    syncToGoogle: true,
     ...overrides,
   } as unknown as CalendarEventWithRelations;
 }
@@ -329,6 +330,36 @@ describe('EventoService.update', () => {
         isCancelled: false,
         overrideTitle: 'Override',
       }),
+    );
+  });
+
+  it('scope=single com syncToGoogle alterado: aplica na série inteira', async () => {
+    const ev = makeEvent({ ownerId: 'owner-1' });
+    const { service, repo } = makeService({
+      findById: jest.fn().mockResolvedValue(ev),
+      upsertException: jest.fn(),
+      update: jest.fn().mockResolvedValue(ev),
+    });
+
+    await service.update('owner-1', 'ev-1', { title: 'X', syncToGoogle: false } as any, {
+      scope: EventMutationScope.single,
+      originalDate: '2026-05-15T13:00:00Z',
+    });
+
+    expect(repo.update).toHaveBeenCalledWith('ev-1', { syncToGoogle: false });
+    expect(repo.touch).not.toHaveBeenCalled();
+  });
+
+  it('scope=all repassa syncToGoogle para o update', async () => {
+    const ev = makeEvent({ ownerId: 'owner-1' });
+    const { service, repo } = makeService({
+      findById: jest.fn().mockResolvedValue(ev),
+      update: jest.fn().mockResolvedValue(ev),
+    });
+    await service.update('owner-1', 'ev-1', { syncToGoogle: false } as any, {});
+    expect(repo.update).toHaveBeenCalledWith(
+      'ev-1',
+      expect.objectContaining({ syncToGoogle: false }),
     );
   });
 

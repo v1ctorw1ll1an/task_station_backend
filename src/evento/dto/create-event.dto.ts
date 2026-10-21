@@ -97,6 +97,11 @@ export class CreateEventDto {
   @Type(() => ReminderInputDto)
   reminders?: ReminderInputDto[];
 
+  /** false = não envia este evento ao Google Agenda do dono. Ausente = envia. */
+  @IsOptional()
+  @IsBoolean()
+  syncToGoogle?: boolean;
+
   @IsOptional()
   @IsUUID('4')
   companyId?: string;

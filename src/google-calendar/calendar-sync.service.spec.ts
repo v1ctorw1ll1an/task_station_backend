@@ -33,6 +33,7 @@ function makeEvent(over: Record<string, unknown> = {}) {
     timezone: 'America/Sao_Paulo',
     rrule: null,
     externalReadOnly: false,
+    syncToGoogle: true,
     deletedAt: null,
     updatedAt: T0,
     exceptions: [],
@@ -250,6 +251,43 @@ describe('CalendarSyncService (google-calendar)', () => {
       await service.pushEvent(ctx, 'ev-1');
       expect(api.events.insert).not.toHaveBeenCalled();
       expect(prisma.googleEventLink.upsert).not.toHaveBeenCalled();
+    });
+
+    it('dono optou por não enviar ao Google: não cria nada', async () => {
+      const { service, api, prisma, ctx } = setup({ event: makeEvent({ syncToGoogle: false }) });
+      await service.pushEvent(ctx, 'ev-1');
+      expect(api.events.insert).not.toHaveBeenCalled();
+      expect(prisma.googleEventLink.upsert).not.toHaveBeenCalled();
+    });
+
+    it('dono optou por não enviar, mas já havia cópia: tira do Google', async () => {
+      const link = {
+        id: 'l1',
+        googleEventId: 'g-1',
+        origin: 'taskdy',
+        readOnly: false,
+        sourceId: TASKDY_SOURCE.id,
+        source: TASKDY_SOURCE,
+      };
+      const { service, api, prisma, ctx } = setup({
+        event: makeEvent({ syncToGoogle: false }),
+        link,
+      });
+      await service.pushEvent(ctx, 'ev-1');
+      expect(api.events.delete).toHaveBeenCalledWith(expect.objectContaining({ eventId: 'g-1' }));
+      expect(prisma.googleEventLink.deleteMany).toHaveBeenCalledWith({ where: { id: 'l1' } });
+    });
+
+    it('opção do dono não vale para o convidado: ele recebe a cópia', async () => {
+      const { service, api, ctx } = setup({
+        event: makeEvent({
+          ownerId: 'outro',
+          syncToGoogle: false,
+          attendees: [{ userId: USER, status: 'accepted' }],
+        }),
+      });
+      await service.pushEvent(ctx, 'ev-1');
+      expect(api.events.insert).toHaveBeenCalled();
     });
 
     it('importado somente-leitura já copiado no calendário TaskDY: tira a cópia', async () => {

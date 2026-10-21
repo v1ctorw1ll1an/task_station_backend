@@ -168,6 +168,13 @@ export class CalendarSyncService {
       return;
     }
 
+    // O dono optou por não enviar este evento ao Google. Vale só para a agenda dele —
+    // convidados seguem a própria integração. Evento vindo do Google não é afetado.
+    if (!ev.syncToGoogle && ev.ownerId === userId && link?.origin !== 'google') {
+      if (link) await this.removeRemote(ctx, link);
+      return;
+    }
+
     const writableSource = !link || isWritableAccessRole(link.source.accessRole);
     const readOnly = ev.ownerId !== userId || ev.externalReadOnly || !writableSource;
 
