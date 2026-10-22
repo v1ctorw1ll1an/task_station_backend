@@ -1,11 +1,10 @@
 import { ConfigService } from '@nestjs/config';
 
+/** Escopo da agenda: o usuário pode desmarcá-lo na tela granular de consentimento. */
+export const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar';
+
 /** Escopos pedidos no consentimento: agenda completa + identidade da conta. */
-export const GOOGLE_SCOPES = [
-  'https://www.googleapis.com/auth/calendar',
-  'openid',
-  'email',
-] as const;
+export const GOOGLE_SCOPES = [GOOGLE_CALENDAR_SCOPE, 'openid', 'email'] as const;
 
 /** Nome do calendário dedicado criado na conta Google (Q3). */
 export const TASKDY_CALENDAR_SUMMARY = 'TaskDY';

@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -20,7 +21,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CalendarSyncEnqueuer } from './calendar-sync.enqueuer';
 import { GoogleApiClient, googleStatus } from './google-api.client';
 import { DEFAULT_TZ, googleCalendarColor, TASKDY_CALENDAR_MARKER } from './google-calendar-mapper';
-import { GoogleCalendarConfig, TASKDY_CALENDAR_SUMMARY } from './google-calendar.config';
+import {
+  GOOGLE_CALENDAR_SCOPE,
+  GoogleCalendarConfig,
+  TASKDY_CALENDAR_SUMMARY,
+} from './google-calendar.config';
 import { GoogleSyncSettingsService } from './google-sync-settings.service';
 import { isWritableAccessRole, SyncDirection } from './sync-rules';
 import { SyncEligibilityService } from './sync-eligibility.service';
@@ -137,6 +142,13 @@ export class GoogleCalendarConnectionService {
     }
 
     const tokens = await this.google.exchangeCode(code);
+    // Consentimento granular: o usuário pode desmarcar a agenda e liberar só a identidade.
+    if (!tokens.scope.split(' ').includes(GOOGLE_CALENDAR_SCOPE)) {
+      this.logger.warn({ userId }, 'Consentimento sem o escopo da agenda');
+      throw new UnprocessableEntityException(
+        'Marque a permissão de acesso ao Google Agenda na tela do Google e tente de novo.',
+      );
+    }
     if (!tokens.refreshToken) {
       throw new BadRequestException('O Google não liberou acesso offline. Tente conectar de novo.');
     }

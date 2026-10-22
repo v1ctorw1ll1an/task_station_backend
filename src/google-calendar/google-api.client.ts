@@ -28,6 +28,8 @@ export interface ExchangedTokens {
   expiresAt: Date | null;
   googleAccountId: string;
   email: string;
+  /** Escopos de fato concedidos (separados por espaço). */
+  scope: string;
 }
 
 const RATE_LIMIT_REASONS = new Set(['rateLimitExceeded', 'userRateLimitExceeded']);
@@ -93,6 +95,7 @@ export class GoogleApiClient {
       expiresAt: tokens.expiry_date ? new Date(tokens.expiry_date) : null,
       googleAccountId: payload.sub,
       email: payload.email,
+      scope: tokens.scope ?? '',
     };
   }
 
