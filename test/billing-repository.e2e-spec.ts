@@ -239,6 +239,79 @@ describe('BillingRepository (e2e — banco real)', () => {
     await expect(repo.countOccupiedSeats(companyId)).resolves.toBe(0);
   });
 
+  /**
+   * O bug: a saída derrubava só o vínculo de empresa. O assento ficava livre, mas o
+   * vínculo de workspace — que é o que os guards olham — continuava, e a pessoa seguia
+   * trabalhando sem ocupar assento.
+   */
+  it('quem sai pelo assento perde os workspaces da empresa — e só os dela', async () => {
+    const suffix = `${Date.now()}`;
+    const saindo = await prisma.user.create({
+      data: {
+        email: `e2e-sai-${suffix}@test.com`,
+        passwordHash: 'x',
+        name: 'Sai',
+        mustResetPassword: false,
+      },
+    });
+    const outraEmpresa = await prisma.company.create({
+      data: { legalName: 'E2E Outra Co', taxId: `e2e-outra-${suffix}`, createdById: userId },
+    });
+    const [ws, wsLixeira, wsOutra] = await Promise.all([
+      prisma.workspace.create({ data: { name: 'WS', companyId, createdById: userId } }),
+      prisma.workspace.create({
+        data: { name: 'WS lixeira', companyId, createdById: userId, deletedAt: new Date() },
+      }),
+      prisma.workspace.create({
+        data: { name: 'WS outra', companyId: outraEmpresa.id, createdById: userId },
+      }),
+    ]);
+    const vinculo = (uid: string, resourceType: 'company' | 'workspace', resourceId: string) =>
+      prisma.membership.create({
+        data: { userId: uid, resourceType, resourceId, role: 'member' },
+      });
+
+    try {
+      await prisma.membership.updateMany({
+        where: { resourceId: companyId },
+        data: { deletedAt: null, scheduledRemovalAt: null },
+      });
+      await vinculo(saindo.id, 'company', companyId);
+      const [noWs, naLixeira, naOutra, doAdmin] = await Promise.all([
+        vinculo(saindo.id, 'workspace', ws.id),
+        vinculo(saindo.id, 'workspace', wsLixeira.id),
+        vinculo(saindo.id, 'workspace', wsOutra.id),
+        vinculo(userId, 'workspace', ws.id),
+      ]);
+
+      await repo.scheduleSeatRemovals(companyId, [saindo.id], new Date());
+      const result = await repo.applyScheduledSeatRemovals(companyId, new Date());
+
+      const apagado = async (id: string) =>
+        (await prisma.membership.findUniqueOrThrow({ where: { id } })).deletedAt !== null;
+      // É este vínculo que o WorkspaceMemberGuard olha — o acesso de fato.
+      await expect(apagado(noWs.id)).resolves.toBe(true);
+      // Restaurar o workspace da lixeira não pode devolver o acesso.
+      await expect(apagado(naLixeira.id)).resolves.toBe(true);
+      // A outra empresa não tem nada com a redução desta.
+      await expect(apagado(naOutra.id)).resolves.toBe(false);
+      // Quem fica, fica com tudo.
+      await expect(apagado(doAdmin.id)).resolves.toBe(false);
+      await expect(repo.countOccupiedSeats(companyId)).resolves.toBe(1);
+      expect(result).toEqual({ count: 1, workspaceMemberships: 2 });
+    } finally {
+      await prisma.membership.deleteMany({
+        where: { resourceId: { in: [ws.id, wsLixeira.id, wsOutra.id] } },
+      });
+      await prisma.membership.deleteMany({ where: { userId: saindo.id } });
+      await prisma.workspace.deleteMany({
+        where: { id: { in: [ws.id, wsLixeira.id, wsOutra.id] } },
+      });
+      await prisma.company.delete({ where: { id: outraEmpresa.id } });
+      await prisma.user.delete({ where: { id: saindo.id } });
+    }
+  });
+
   it('nova seleção substitui a anterior', async () => {
     await prisma.membership.updateMany({
       where: { resourceId: companyId },

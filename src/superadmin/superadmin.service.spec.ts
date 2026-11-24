@@ -77,6 +77,7 @@ function makeRepo(
     countMemberships: jest.fn(),
     createMembership: jest.fn(),
     updateMembership: jest.fn(),
+    deactivateCompanyMembership: jest.fn().mockResolvedValue({ workspaceMemberships: 0 }),
     createCompanyWithAdmin: jest.fn(),
     createCompanyWithNewAdmin: jest.fn(),
     findCompaniesByIds: jest.fn(),
@@ -526,19 +527,48 @@ describe('SuperadminService.deactivateMembership', () => {
     ).rejects.toThrow(BadRequestException);
   });
 
-  it('soft-deleta membership quando há outro admin', async () => {
-    const membership = makeMembership();
+  it('conta só administradores ao proteger o único admin', async () => {
     const repo = makeRepo({
-      findMembership: jest.fn().mockResolvedValue(membership),
+      findMembership: jest.fn().mockResolvedValue(makeMembership()),
+      countMemberships: jest.fn().mockResolvedValue(0),
+    });
+    const { service } = makeService(repo);
+    await expect(
+      service.deactivateMembership('company-1', 'membership-1', 'super-1'),
+    ).rejects.toThrow(BadRequestException);
+    // Membros comuns não contam: com eles a empresa ficaria sem administrador.
+    expect(repo.countMemberships).toHaveBeenCalledWith(
+      expect.objectContaining({ role: 'admin', id: { not: 'membership-1' } }),
+    );
+  });
+
+  it('tira da empresa e dos workspaces dela quando há outro admin', async () => {
+    const repo = makeRepo({
+      findMembership: jest.fn().mockResolvedValue(makeMembership({ userId: 'user-7' })),
       countMemberships: jest.fn().mockResolvedValue(1),
-      updateMembership: jest.fn().mockResolvedValue({}),
+      deactivateCompanyMembership: jest.fn().mockResolvedValue({ workspaceMemberships: 2 }),
     });
     const { service } = makeService(repo);
     await service.deactivateMembership('company-1', 'membership-1', 'super-1');
-    expect(repo.updateMembership).toHaveBeenCalledWith(
+    expect(repo.deactivateCompanyMembership).toHaveBeenCalledWith(
       'membership-1',
-      expect.objectContaining({ deletedAt: expect.any(Date) }),
+      'company-1',
+      'user-7',
+      expect.any(Date),
     );
+    // Só o vínculo de empresa, sem os workspaces, era o bug: assento livre, acesso de pé.
+    expect(repo.updateMembership).not.toHaveBeenCalled();
+  });
+
+  it('membro comum sai sem checar administradores', async () => {
+    const repo = makeRepo({
+      findMembership: jest.fn().mockResolvedValue(makeMembership({ role: 'member' })),
+      deactivateCompanyMembership: jest.fn().mockResolvedValue({ workspaceMemberships: 1 }),
+    });
+    const { service } = makeService(repo);
+    await service.deactivateMembership('company-1', 'membership-1', 'super-1');
+    expect(repo.countMemberships).not.toHaveBeenCalled();
+    expect(repo.deactivateCompanyMembership).toHaveBeenCalled();
   });
 });
 

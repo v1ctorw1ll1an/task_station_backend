@@ -7,6 +7,7 @@ import {
   SubscriptionStatus,
 } from '../generated/prisma/client';
 import { TRIAL_DAYS, TRIAL_SEATS } from '../billing/billing.constants';
+import { revokeCompanyWorkspaceMemberships } from '../empresa/revoke-company-workspace-memberships';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -244,6 +245,27 @@ export class SuperadminRepository {
 
   updateMembership(id: string, data: Prisma.MembershipUpdateInput) {
     return this.prisma.membership.update({ where: { id }, data });
+  }
+
+  /**
+   * Tira a pessoa da empresa: vínculo de empresa **e** vínculos com os workspaces dela,
+   * juntos. Inativar só o de empresa liberava o assento e deixava o acesso aos
+   * workspaces de pé.
+   */
+  deactivateCompanyMembership(membershipId: string, companyId: string, userId: string, now: Date) {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.membership.update({
+        where: { id: membershipId },
+        data: { deletedAt: now, scheduledRemovalAt: null },
+      });
+      const workspaceMemberships = await revokeCompanyWorkspaceMemberships(
+        tx,
+        companyId,
+        [userId],
+        now,
+      );
+      return { workspaceMemberships };
+    });
   }
 
   // ── Transactions ──────────────────────────────────────────────────────────────

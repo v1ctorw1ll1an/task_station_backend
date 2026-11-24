@@ -497,8 +497,11 @@ export class EmpresaService {
       );
     }
 
-    await this.repo.updateMembership(adminMembership.id, { deletedAt: new Date() });
-    this.logger.info({ companyId, targetUserId, performedById }, 'Company admin role revoked');
+    // Rebaixa a membro, não remove: o vínculo de empresa é o único que a pessoa tem
+    // nela, e apagá-lo liberava o assento enquanto os workspaces dela continuavam de pé.
+    // Quem deve sair da empresa sai por `removeMember`.
+    await this.repo.updateMembership(adminMembership.id, { role: MembershipRole.member });
+    this.logger.info({ companyId, targetUserId, performedById }, 'Company admin demoted to member');
   }
 
   /**

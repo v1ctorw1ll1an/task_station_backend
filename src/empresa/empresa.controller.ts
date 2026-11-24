@@ -247,8 +247,12 @@ export class EmpresaController {
 
   @Delete('admins/:userId')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Revogar papel de administrador da empresa' })
-  @ApiResponse({ status: 204, description: 'Papel de admin revogado' })
+  @ApiOperation({
+    summary: 'Revogar papel de administrador da empresa',
+    description:
+      'Rebaixa a membro: a pessoa continua na empresa, ocupando o assento, com os vínculos de workspace que já tinha. Para tirá-la da empresa, use DELETE membros/:userId.',
+  })
+  @ApiResponse({ status: 204, description: 'Rebaixado a membro' })
   @ApiResponse({ status: 400, description: 'Não pode revogar o único admin ou o próprio papel' })
   @ApiResponse({ status: 404, description: 'Admin não encontrado' })
   async revokeAdmin(

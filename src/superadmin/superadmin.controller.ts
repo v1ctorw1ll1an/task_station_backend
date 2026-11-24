@@ -74,7 +74,10 @@ export class SuperadminController {
 
   @Patch('empresas/:id/membros/:membershipId/inativar')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Inativar vínculo de admin com empresa' })
+  @ApiOperation({
+    summary: 'Inativar vínculo com a empresa',
+    description: 'Tira a pessoa da empresa e de todos os workspaces dela, liberando o assento.',
+  })
   @ApiResponse({ status: 204, description: 'Vínculo inativado' })
   @ApiResponse({ status: 400, description: 'Não pode inativar único admin' })
   @ApiResponse({ status: 404, description: 'Vínculo não encontrado' })

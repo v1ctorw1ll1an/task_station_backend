@@ -262,23 +262,38 @@ export class SuperadminService {
       throw new NotFoundException('Vínculo não encontrado');
     }
 
-    const activeAdminsCount = await this.repo.countMemberships({
-      resourceType: 'company',
-      resourceId: companyId,
-      deletedAt: null,
-      id: { not: membershipId },
-    });
-
-    if (activeAdminsCount === 0) {
-      throw new BadRequestException(
-        'Não é possível inativar o único administrador da empresa. Adicione outro administrador primeiro.',
-      );
+    // Conta só administradores: contar qualquer vínculo deixava inativar o único admin
+    // de uma empresa que tivesse algum membro comum — ela ficava sem administrador.
+    if (membership.role === 'admin') {
+      const otherAdmins = await this.repo.countMemberships({
+        resourceType: 'company',
+        resourceId: companyId,
+        role: 'admin',
+        deletedAt: null,
+        id: { not: membershipId },
+      });
+      if (otherAdmins === 0) {
+        throw new BadRequestException(
+          'Não é possível inativar o único administrador da empresa. Adicione outro administrador primeiro.',
+        );
+      }
     }
 
-    await this.repo.updateMembership(membershipId, { deletedAt: new Date() });
+    const { workspaceMemberships } = await this.repo.deactivateCompanyMembership(
+      membershipId,
+      companyId,
+      membership.userId,
+      new Date(),
+    );
 
     this.logger.info(
-      { companyId, membershipId, performedById },
+      {
+        companyId,
+        membershipId,
+        targetUserId: membership.userId,
+        workspaceMemberships,
+        performedById,
+      },
       'Company membership deactivated by superadmin',
     );
   }

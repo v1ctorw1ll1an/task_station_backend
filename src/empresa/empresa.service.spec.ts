@@ -512,7 +512,7 @@ describe('EmpresaService.revokeAdmin', () => {
     );
   });
 
-  it('soft-deleta o membership de admin quando há outro admin', async () => {
+  it('rebaixa a membro quando há outro admin — não tira da empresa', async () => {
     const adminMembership = makeMembership({
       id: 'membership-admin',
       userId: 'user-2',
@@ -525,9 +525,13 @@ describe('EmpresaService.revokeAdmin', () => {
     });
     const { service } = makeService(repo);
     await service.revokeAdmin('company-1', 'user-2', 'user-1');
-    expect(repo.updateMembership).toHaveBeenCalledWith(
-      'membership-admin',
-      expect.objectContaining({ deletedAt: expect.any(Date) }),
+    expect(repo.updateMembership).toHaveBeenCalledWith('membership-admin', {
+      role: MembershipRole.member,
+    });
+    // Apagar o vínculo liberava o assento com os workspaces da pessoa ainda de pé.
+    expect(repo.updateMembership).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ deletedAt: expect.anything() }),
     );
   });
 });

@@ -800,10 +800,13 @@ export class BillingWebhookService {
     // Ciclo novo começou: quem o admin marcou para sair perde o acesso agora — até
     // aqui a pessoa trabalhou dentro do ciclo que a empresa já tinha pago.
     if (aplicaReducao) {
-      const { count } = await this.repo.applyScheduledSeatRemovals(sub.companyId, now);
+      const { count, workspaceMemberships } = await this.repo.applyScheduledSeatRemovals(
+        sub.companyId,
+        now,
+      );
       if (count > 0) {
         this.logger.info(
-          { companyId: sub.companyId, removidos: count },
+          { companyId: sub.companyId, removidos: count, vinculosDeWorkspace: workspaceMemberships },
           'Saídas agendadas efetivadas na renovação',
         );
       }

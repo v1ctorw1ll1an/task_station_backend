@@ -7,6 +7,7 @@ import {
   SeatAddonStatus,
   SubscriptionStatus,
 } from '../generated/prisma/client';
+import { revokeCompanyWorkspaceMemberships } from '../empresa/revoke-company-workspace-memberships';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -103,16 +104,41 @@ export class BillingRepository {
     });
   }
 
-  /** Efetiva as saídas agendadas (soft delete) — chamado quando a renovação é paga. */
-  applyScheduledSeatRemovals(companyId: string, now: Date) {
-    return this.prisma.membership.updateMany({
-      where: {
-        resourceType: 'company',
-        resourceId: companyId,
-        deletedAt: null,
-        scheduledRemovalAt: { not: null },
-      },
-      data: { deletedAt: now, scheduledRemovalAt: null },
+  /**
+   * Efetiva as saídas agendadas (soft delete) — chamado quando a renovação é paga (R19).
+   *
+   * Sair do assento é sair da empresa: caem o vínculo de empresa **e** os vínculos com
+   * os workspaces dela, a mesma regra da remoção manual (`EmpresaService.removeMember`).
+   * O porquê está em `revokeCompanyWorkspaceMemberships`.
+   *
+   * `count` = pessoas que saíram (o que o assento conta), não vínculos apagados.
+   */
+  applyScheduledSeatRemovals(
+    companyId: string,
+    now: Date,
+  ): Promise<{ count: number; workspaceMemberships: number }> {
+    return this.prisma.$transaction(async (tx) => {
+      // Marca e devolve no mesmo comando: um reagendamento concorrente não consegue
+      // trocar quem sai entre "quem está marcado" e "apagar".
+      const saindo = await tx.membership.updateManyAndReturn({
+        where: {
+          resourceType: 'company',
+          resourceId: companyId,
+          deletedAt: null,
+          scheduledRemovalAt: { not: null },
+        },
+        data: { deletedAt: now, scheduledRemovalAt: null },
+        select: { userId: true },
+      });
+      if (saindo.length === 0) return { count: 0, workspaceMemberships: 0 };
+
+      const workspaceMemberships = await revokeCompanyWorkspaceMemberships(
+        tx,
+        companyId,
+        saindo.map((m) => m.userId),
+        now,
+      );
+      return { count: saindo.length, workspaceMemberships };
     });
   }
 
