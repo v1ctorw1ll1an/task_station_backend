@@ -51,6 +51,15 @@ export class SoftDeletePurgeService {
       ['calendarEvent', () => this.prisma.calendarEvent.deleteMany({ where })],
       ['stickyNote', () => this.prisma.stickyNote.deleteMany({ where })],
       ['notification', () => this.prisma.notification.deleteMany({ where })],
+      // Token de acesso não tem `deletedAt`: morto é o revogado ou vencido, e some
+      // depois da mesma retenção.
+      [
+        'apiToken',
+        () =>
+          this.prisma.apiToken.deleteMany({
+            where: { OR: [{ revokedAt: { lt: cutoff } }, { expiresAt: { lt: cutoff } }] },
+          }),
+      ],
       ['membership', () => this.prisma.membership.deleteMany({ where })],
       ['workspace', () => this.prisma.workspace.deleteMany({ where })],
       ['company', () => this.prisma.company.deleteMany({ where })],

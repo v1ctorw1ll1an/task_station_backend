@@ -86,3 +86,16 @@ export const TASK_HISTORY_MAX = 15;
  */
 export const PASSWORD_MIN = 6;
 export const PASSWORD_MAX = 72;
+
+/**
+ * Tokens de acesso pessoal (PAT), usados pelo servidor MCP do Claude Code — ver
+ * `src/api-token/`. NÃO é tier-aware. Espelhado em `frontend/lib/limits.ts`.
+ */
+export const API_TOKEN = {
+  /** Nome que o usuário dá ao token ("Claude Code no notebook"). */
+  nameMax: 60,
+  /** Tokens válidos (não revogados e não expirados) por usuário. */
+  maxActivePerUser: 10,
+  defaultDays: 90,
+  maxDays: 365,
+} as const;

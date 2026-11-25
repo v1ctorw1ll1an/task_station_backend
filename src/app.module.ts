@@ -28,6 +28,8 @@ import { MaintenanceModule } from './maintenance/maintenance.module';
 import { BillingModule } from './billing/billing.module';
 import { ConviteModule } from './convite/convite.module';
 import { GoogleCalendarModule } from './google-calendar/google-calendar.module';
+import { ApiTokenModule } from './api-token/api-token.module';
+import { ApiTokenScopeGuard } from './api-token/guards/api-token-scope.guard';
 
 @Module({
   imports: [
@@ -116,11 +118,18 @@ import { GoogleCalendarModule } from './google-calendar/google-calendar.module';
     BillingModule,
     ConviteModule,
     GoogleCalendarModule,
+    ApiTokenModule,
   ],
   providers: [
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
+    },
+    {
+      // Limita o token de acesso pessoal (PAT) às rotas `@AllowApiToken` do workspace
+      // dele. Precisa vir logo após o JwtAuthGuard, antes dos demais.
+      provide: APP_GUARD,
+      useClass: ApiTokenScopeGuard,
     },
     {
       provide: APP_GUARD,

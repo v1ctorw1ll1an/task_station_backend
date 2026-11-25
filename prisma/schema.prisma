@@ -207,6 +207,7 @@ model User {
   acceptedInvites               CompanyInvite[]           @relation("CompanyInviteAcceptedBy")
   googleCalendar                GoogleCalendarConnection?
   googleCalendarSettingsUpdated GoogleCalendarSettings[]  @relation("GoogleCalendarSettingsUpdatedBy")
+  apiTokens                     ApiToken[]
 
   @@index([deletedAt])
   @@map("users")
@@ -282,6 +283,7 @@ model Workspace {
   workspaceOrders UserWorkspaceOrder[]
   projectOrders   UserProjectOrder[]
   calendarEvents  CalendarEvent[]
+  apiTokens       ApiToken[]
 
   @@index([companyId])
   @@map("workspaces")
@@ -467,6 +469,32 @@ model PasswordResetToken {
 
   @@index([userId, type, usedAt, expiresAt])
   @@map("password_reset_tokens")
+}
+
+// Token de acesso pessoal (PAT): deixa um cliente externo — o servidor MCP do Claude
+// Code, por exemplo — agir como o usuário SEM ocupar o assento (não toca
+// `User.activeSessionId`, então não derruba a sessão do navegador). Travado num
+// workspace e numa lista fechada de rotas (`@AllowApiToken`). Só o hash SHA-256 fica
+// no banco; o token em claro aparece uma única vez, na criação.
+model ApiToken {
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  workspaceId String    @map("workspace_id")
+  name        String
+  tokenHash   String    @unique @map("token_hash")
+  // Começo do token em claro (`tdy_abcd…`), só para o usuário reconhecer qual é qual.
+  prefix      String
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz
+  lastUsedAt  DateTime? @map("last_used_at") @db.Timestamptz
+  revokedAt   DateTime? @map("revoked_at") @db.Timestamptz
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([workspaceId])
+  @@map("api_tokens")
 }
 
 model TaskHistory {

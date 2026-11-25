@@ -271,6 +271,7 @@ export class AuthService {
     }
 
     await this.repo.updateUser(userId, updateData);
+    await this.repo.revokeApiTokens(userId);
 
     this.logger.info({ userId, nameProvided: !!dto.name }, 'Password changed via first access');
   }
@@ -405,6 +406,8 @@ export class AuthService {
     }
 
     await this.repo.updateUser(userId, { mustResetPassword: true });
+    // Conta possivelmente comprometida: token de acesso vazado não pode sobreviver.
+    await this.repo.revokeApiTokens(userId);
 
     const rawToken = await this.generateFirstAccessToken(userId);
 

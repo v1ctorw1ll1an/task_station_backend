@@ -203,6 +203,7 @@ export class SuperadminService {
     }
 
     const updated = await this.repo.updateProfile(userId, data);
+    if (password) await this.repo.revokeApiTokens(userId);
     this.logger.info({ userId, changes: Object.keys(dto) }, 'Superuser updated own profile');
     return updated;
   }
@@ -324,6 +325,7 @@ export class SuperadminService {
     }
 
     const updated = await this.repo.updateUser(id, data);
+    if (password) await this.repo.revokeApiTokens(id);
 
     this.logger.info(
       { targetUserId: id, changes: Object.keys(dto), performedById: currentUserId },
@@ -354,6 +356,8 @@ export class SuperadminService {
     }
 
     const updated = await this.repo.updateUserSuperuserStatus(targetId, isSuperuser);
+    // Tokens do Claude Code são só de superusuário: quem é rebaixado perde os seus.
+    if (!isSuperuser) await this.repo.revokeApiTokens(targetId);
     this.logger.info({ performedById, targetId, isSuperuser }, 'Superuser status toggled');
     return updated;
   }

@@ -13,6 +13,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { AllowApiToken } from '../api-token/decorators/allow-api-token.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthUser } from '../auth/strategies/jwt.strategy';
 import { WorkspaceAdminGuard } from './guards/workspace-admin.guard';
@@ -36,6 +37,7 @@ export class WorkspaceController {
   // ── Workspace info ────────────────────────────────────────────────────────────
 
   @Get()
+  @AllowApiToken()
   @UseGuards(WorkspaceMemberGuard)
   @ApiOperation({ summary: 'Informações básicas do workspace (id, companyId, isActive)' })
   @ApiResponse({ status: 200, description: 'Workspace encontrado' })
@@ -60,6 +62,7 @@ export class WorkspaceController {
   }
 
   @Get('projetos')
+  @AllowApiToken()
   @UseGuards(WorkspaceMemberGuard)
   @ApiOperation({ summary: 'Listar projetos do workspace com filtros e paginação' })
   @ApiResponse({ status: 200, description: 'Lista paginada de projetos' })
@@ -73,6 +76,7 @@ export class WorkspaceController {
   }
 
   @Get('projetos/:projectId')
+  @AllowApiToken()
   @UseGuards(WorkspaceMemberGuard)
   @ApiOperation({ summary: 'Detalhes de um projeto' })
   @ApiResponse({ status: 200, description: 'Projeto encontrado' })
@@ -226,6 +230,7 @@ export class WorkspaceController {
   // ── Visão Geral ───────────────────────────────────────────────────────────────
 
   @Get('visao-geral')
+  @AllowApiToken()
   @UseGuards(WorkspaceMemberGuard)
   @ApiOperation({ summary: 'Visão geral: todos os projetos com suas tasks agrupadas por coluna' })
   @ApiResponse({ status: 200, description: 'Dados de visão geral do workspace' })
@@ -238,6 +243,7 @@ export class WorkspaceController {
   }
 
   @Get('task/:taskRef')
+  @AllowApiToken()
   @UseGuards(WorkspaceMemberGuard)
   @ApiOperation({ summary: 'Resolver referência de task (ex: TS-42) para taskId e projectId' })
   @ApiResponse({ status: 200, description: 'Task encontrada' })

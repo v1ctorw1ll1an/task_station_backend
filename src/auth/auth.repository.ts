@@ -7,6 +7,7 @@ import {
   TokenType,
 } from '../generated/prisma/client';
 import { TRIAL_DAYS, TRIAL_SEATS } from '../billing/billing.constants';
+import { revokeUserApiTokens } from '../api-token/revoke-user-api-tokens';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -146,7 +147,13 @@ export class AuthRepository {
         where: { id: tokenId },
         data: { usedAt: new Date() },
       }),
+      revokeUserApiTokens(this.prisma, userId),
     ]);
+  }
+
+  /** Senha trocada ou invalidada: tokens de acesso antigos param de valer. */
+  revokeApiTokens(userId: string) {
+    return revokeUserApiTokens(this.prisma, userId);
   }
 
   consumeFirstAccessToken(userId: string, tokenId: string, passwordHash: string, name: string) {
@@ -161,6 +168,7 @@ export class AuthRepository {
         where: { id: tokenId },
         data: { usedAt: new Date() },
       });
+      await revokeUserApiTokens(tx, userId);
 
       return user;
     });

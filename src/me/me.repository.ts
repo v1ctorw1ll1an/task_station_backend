@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client';
+import { revokeUserApiTokens } from '../api-token/revoke-user-api-tokens';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -81,11 +82,16 @@ export class MeRepository {
     });
   }
 
-  updateUserPasswordHash(userId: string, passwordHash: string) {
-    return this.prisma.user.update({
-      where: { id: userId },
-      data: { passwordHash },
-    });
+  /** Troca a senha e, junto, revoga os tokens de acesso pessoal do usuário. */
+  async updateUserPasswordHash(userId: string, passwordHash: string) {
+    const [user] = await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: userId },
+        data: { passwordHash },
+      }),
+      revokeUserApiTokens(this.prisma, userId),
+    ]);
+    return user;
   }
 
   private buildUserTasksWhere(

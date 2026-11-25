@@ -66,6 +66,9 @@ const ISENTAS: Record<string, string> = {
   'DELETE /me/sticky-notes/:id/tasks/:taskId':
     'vínculo do recado pessoal com uma task; não altera a task',
   'PATCH /me/calendar-events/:id/rsvp': 'responder convite é do convidado, não escrita da empresa',
+  'POST /me/api-tokens':
+    'criar token pessoal não grava dado da empresa; cada uso do token passa pelo gate normalmente',
+  'DELETE /me/api-tokens/:id': 'revogar o próprio token sempre tem que funcionar',
   'POST /integrations/google/webhook':
     'é o Google avisando que a agenda mudou; o gate por plano mora no sync (elegibilidade)',
   'DELETE /integrations/google': 'desconectar a própria conta Google sempre tem que funcionar',

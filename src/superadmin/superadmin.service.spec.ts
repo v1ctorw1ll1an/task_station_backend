@@ -81,6 +81,7 @@ function makeRepo(
     createCompanyWithAdmin: jest.fn(),
     createCompanyWithNewAdmin: jest.fn(),
     findCompaniesByIds: jest.fn(),
+    revokeApiTokens: jest.fn().mockResolvedValue({ count: 0 }),
     ...overrides,
   } as unknown as jest.Mocked<SuperadminRepository>;
 }
@@ -385,6 +386,7 @@ describe('SuperadminService.updateUser', () => {
     const dataArg = repo.updateUser.mock.calls[0][1];
     expect(dataArg.mustResetPassword).toBe(true);
     expect(dataArg.passwordHash).toBeDefined();
+    expect(repo.revokeApiTokens).toHaveBeenCalledTimes(1);
   });
 
   it('não seta mustResetPassword quando senha não muda', async () => {
@@ -397,6 +399,7 @@ describe('SuperadminService.updateUser', () => {
     await service.updateUser('user-1', { isActive: false }, 'super-1');
     const dataArg = repo.updateUser.mock.calls[0][1];
     expect(dataArg.mustResetPassword).toBeUndefined();
+    expect(repo.revokeApiTokens).not.toHaveBeenCalled();
   });
 });
 
@@ -432,6 +435,7 @@ describe('SuperadminService.updateProfile', () => {
     const dataArg = repo.updateProfile.mock.calls[0][1];
     expect(dataArg.passwordHash).toBeDefined();
     expect(dataArg.password).toBeUndefined();
+    expect(repo.revokeApiTokens).toHaveBeenCalledWith('user-1');
   });
 });
 
@@ -569,6 +573,31 @@ describe('SuperadminService.deactivateMembership', () => {
     await service.deactivateMembership('company-1', 'membership-1', 'super-1');
     expect(repo.countMemberships).not.toHaveBeenCalled();
     expect(repo.deactivateCompanyMembership).toHaveBeenCalled();
+  });
+});
+
+// ── toggleSuperuser ────────────────────────────────────────────────────────────
+
+describe('SuperadminService.toggleSuperuser', () => {
+  const comAlvo = () =>
+    makeRepo({
+      findUserById: jest.fn().mockResolvedValue({ id: 'user-2' }),
+      countSuperusers: jest.fn().mockResolvedValue(2),
+      updateUserSuperuserStatus: jest.fn().mockResolvedValue({ id: 'user-2' }),
+    });
+
+  it('rebaixar revoga os tokens do Claude Code (integração só de superusuário)', async () => {
+    const repo = comAlvo();
+    const { service } = makeService(repo);
+    await service.toggleSuperuser('user-2', 'super-1', false);
+    expect(repo.revokeApiTokens).toHaveBeenCalledWith('user-2');
+  });
+
+  it('promover não mexe em token', async () => {
+    const repo = comAlvo();
+    const { service } = makeService(repo);
+    await service.toggleSuperuser('user-2', 'super-1', true);
+    expect(repo.revokeApiTokens).not.toHaveBeenCalled();
   });
 });
 

@@ -7,6 +7,7 @@ import {
   SubscriptionStatus,
 } from '../generated/prisma/client';
 import { TRIAL_DAYS, TRIAL_SEATS } from '../billing/billing.constants';
+import { revokeUserApiTokens } from '../api-token/revoke-user-api-tokens';
 import { revokeCompanyWorkspaceMemberships } from '../empresa/revoke-company-workspace-memberships';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -182,6 +183,11 @@ export class SuperadminRepository {
         deletedAt: true,
       },
     });
+  }
+
+  /** Senha trocada pelo superusuário: tokens de acesso antigos param de valer. */
+  revokeApiTokens(userId: string) {
+    return revokeUserApiTokens(this.prisma, userId);
   }
 
   updateProfile(id: string, data: Record<string, unknown>) {

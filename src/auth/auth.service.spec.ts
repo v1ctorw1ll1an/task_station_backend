@@ -61,6 +61,7 @@ function makeRepo(
     markTokenUsed: jest.fn(),
     resetPasswordWithToken: jest.fn(),
     consumeFirstAccessToken: jest.fn(),
+    revokeApiTokens: jest.fn().mockResolvedValue({ count: 0 }),
     ...overrides,
   } as unknown as jest.Mocked<AuthRepository>;
 }
@@ -405,6 +406,8 @@ describe('AuthService.resetPassword', () => {
     const callData = (repo.updateUser.mock.calls[0] as unknown[])[1] as Record<string, unknown>;
     expect(callData.passwordHash).toBeDefined();
     expect(typeof callData.passwordHash).toBe('string');
+    // Senha nova: tokens de acesso pessoal antigos param de valer.
+    expect(repo.revokeApiTokens).toHaveBeenCalledWith('user-1');
   });
 
   it('inclui name no updateData quando name fornecido', async () => {
@@ -681,6 +684,8 @@ describe('AuthService.invalidateUserCredentials', () => {
     const service = makeService(repo);
     const rawToken = await service.invalidateUserCredentials('user-1', 'admin-1');
     expect(repo.updateUser).toHaveBeenCalledWith('user-1', { mustResetPassword: true });
+    // Conta possivelmente comprometida: token de acesso vazado morre junto.
+    expect(repo.revokeApiTokens).toHaveBeenCalledWith('user-1');
     expect(typeof rawToken).toBe('string');
     expect(rawToken.length).toBeGreaterThan(10);
   });

@@ -22,6 +22,7 @@ import { Response } from 'express';
 import { createReadStream } from 'fs';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import { AllowApiToken } from '../api-token/decorators/allow-api-token.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthUser } from '../auth/strategies/jwt.strategy';
 import { ProjetoAdminGuard } from './guards/projeto-admin.guard';
@@ -59,6 +60,7 @@ export class ProjetoController {
   // ── Kanban ────────────────────────────────────────────────────────────────────
 
   @Get('kanban')
+  @AllowApiToken()
   @ApiOperation({ summary: 'Retorna colunas e tasks do projeto (Kanban)' })
   @ApiResponse({ status: 200, description: 'Kanban retornado com sucesso' })
   @ApiResponse({ status: 404, description: 'Projeto não encontrado' })
@@ -71,6 +73,7 @@ export class ProjetoController {
   }
 
   @Get('colunas/:columnId/tasks')
+  @AllowApiToken()
   @ApiOperation({ summary: 'Paginação de tasks de uma coluna (load more do Kanban)' })
   @ApiResponse({ status: 200, description: 'Lista paginada de tasks' })
   @ApiResponse({ status: 404, description: 'Projeto ou coluna não encontrados' })
@@ -89,6 +92,7 @@ export class ProjetoController {
   }
 
   @Get('membros')
+  @AllowApiToken()
   @ApiOperation({ summary: 'Listar membros do workspace para seleção de responsável' })
   @ApiResponse({ status: 200, description: 'Lista de membros ativos' })
   listMembers(@Param('projectId') projectId: string) {
@@ -163,6 +167,7 @@ export class ProjetoController {
   // ── Tasks ─────────────────────────────────────────────────────────────────────
 
   @Post('tasks')
+  @AllowApiToken()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Criar task no projeto' })
   @ApiResponse({ status: 201, description: 'Task criada' })
@@ -175,6 +180,7 @@ export class ProjetoController {
   }
 
   @Get('tasks/:taskId')
+  @AllowApiToken()
   @ApiOperation({ summary: 'Busca task por ID' })
   @ApiResponse({ status: 200, description: 'Task encontrada' })
   @ApiResponse({ status: 404, description: 'Task não encontrada' })
@@ -183,6 +189,7 @@ export class ProjetoController {
   }
 
   @Patch('tasks/:taskId')
+  @AllowApiToken()
   @ApiOperation({ summary: 'Editar task' })
   @ApiResponse({ status: 200, description: 'Task atualizada' })
   @ApiResponse({ status: 404, description: 'Task não encontrada' })
@@ -196,6 +203,7 @@ export class ProjetoController {
   }
 
   @Patch('tasks/:taskId/move')
+  @AllowApiToken()
   @ApiOperation({ summary: 'Mover task para outra coluna ou reordenar' })
   @ApiResponse({ status: 200, description: 'Task movida' })
   @ApiResponse({ status: 404, description: 'Task ou coluna não encontrada' })
@@ -244,6 +252,7 @@ export class ProjetoController {
   }
 
   @Get('tasks/:taskId/history')
+  @AllowApiToken()
   @ApiOperation({ summary: 'Histórico de alterações da task (paginado)' })
   @ApiResponse({ status: 200, description: 'Histórico retornado com sucesso' })
   @ApiResponse({ status: 404, description: 'Task não encontrada' })
@@ -261,6 +270,7 @@ export class ProjetoController {
   }
 
   @Patch('tasks/:taskId/assign')
+  @AllowApiToken()
   @ApiOperation({ summary: 'Atribuir ou remover responsável da task' })
   @ApiResponse({ status: 200, description: 'Responsável atualizado' })
   @ApiResponse({ status: 404, description: 'Task não encontrada' })
@@ -300,6 +310,7 @@ export class ProjetoController {
   // ── Labels ────────────────────────────────────────────────────────────────────
 
   @Get('labels')
+  @AllowApiToken()
   @ApiOperation({ summary: 'Listar labels do projeto' })
   @ApiResponse({ status: 200, description: 'Lista de labels' })
   listLabels(@Param('projectId') projectId: string) {
@@ -351,6 +362,7 @@ export class ProjetoController {
   // ── Checklists ───────────────────────────────────────────────────────────────
 
   @Get('tasks/:taskId/checklists')
+  @AllowApiToken()
   @ApiOperation({ summary: 'Listar itens do checklist' })
   @ApiResponse({ status: 200, description: 'Itens retornados' })
   listChecklists(@Param('projectId') projectId: string, @Param('taskId') taskId: string) {
@@ -358,6 +370,7 @@ export class ProjetoController {
   }
 
   @Post('tasks/:taskId/checklists')
+  @AllowApiToken()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Criar item no checklist' })
   @ApiResponse({ status: 201, description: 'Item criado' })
@@ -371,6 +384,7 @@ export class ProjetoController {
   }
 
   @Patch('tasks/:taskId/checklists/:checklistId')
+  @AllowApiToken()
   @ApiOperation({ summary: 'Atualizar item do checklist' })
   @ApiResponse({ status: 200, description: 'Item atualizado' })
   updateChecklist(
@@ -412,6 +426,7 @@ export class ProjetoController {
   // ── Comentários ───────────────────────────────────────────────────────────────
 
   @Get('tasks/:taskId/comments')
+  @AllowApiToken()
   @ApiOperation({ summary: 'Listar comentários da task' })
   @ApiResponse({ status: 200, description: 'Comentários retornados' })
   @ApiResponse({ status: 404, description: 'Task não encontrada' })
@@ -420,6 +435,7 @@ export class ProjetoController {
   }
 
   @Post('tasks/:taskId/comments')
+  @AllowApiToken()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Criar comentário na task' })
   @ApiResponse({ status: 201, description: 'Comentário criado' })
@@ -434,6 +450,7 @@ export class ProjetoController {
   }
 
   @Patch('tasks/:taskId/comments/:commentId')
+  @AllowApiToken()
   @ApiOperation({ summary: 'Editar comentário (apenas autor ou admin)' })
   @ApiResponse({ status: 200, description: 'Comentário atualizado' })
   @ApiResponse({ status: 403, description: 'Sem permissão para editar' })
