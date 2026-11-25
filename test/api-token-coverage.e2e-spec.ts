@@ -29,6 +29,8 @@ const LIBERADAS = [
   'GET /workspace/:workspaceId/projetos/:projectId',
   'GET /workspace/:workspaceId/visao-geral',
   'GET /workspace/:workspaceId/task/:taskRef',
+  // Criar projeto: só onde o usuário é admin do workspace (WorkspaceAdminGuard).
+  'POST /workspace/:workspaceId/projetos',
 
   'GET /projetos/:projectId/kanban',
   'GET /projetos/:projectId/colunas/:columnId/tasks',

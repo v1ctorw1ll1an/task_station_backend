@@ -296,8 +296,13 @@ export class WorkspaceRepository {
     ]);
   }
 
-  findTaskByRef(workspaceId: string, taskNumber: number) {
-    return this.prisma.task.findFirst({
+  /**
+   * Todas as tasks com este número no workspace — no máximo uma por projeto. O número é
+   * único **por projeto** (`@@unique([projectId, taskNumber])`), então quem resolve a
+   * referência escolhe pelo prefixo; `findFirst` pegava a de um projeto qualquer.
+   */
+  findTasksByNumber(workspaceId: string, taskNumber: number) {
+    return this.prisma.task.findMany({
       where: {
         taskNumber,
         deletedAt: null,

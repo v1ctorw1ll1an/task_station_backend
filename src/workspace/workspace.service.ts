@@ -448,24 +448,54 @@ export class WorkspaceService {
     });
   }
 
-  async resolveTaskRef(workspaceId: string, taskRef: string) {
+  /**
+   * Resolve "PREFIXO-N" (ex.: TS-42) para a task.
+   *
+   * O número é único por projeto, não no workspace: junta as tasks com esse número e
+   * fica com a do projeto cujo prefixo bate. Buscar só pelo número pegava a primeira de
+   * um projeto qualquer e devolvia 404 para as demais (num workspace com 8 projetos, "1"
+   * existe 8 vezes — só uma delas resolvia).
+   *
+   * Dois projetos podem gerar o mesmo prefixo ("mais saude" e "Marketplace Sistema" →
+   * MS). Aí não há como escolher: 409 com as candidatas, para quem chamou usar o id.
+   * Projeto restrito para o usuário fica de fora — nem aparece como candidata.
+   */
+  async resolveTaskRef(workspaceId: string, taskRef: string, userId: string, isAdmin: boolean) {
     const workspace = await this.repo.findWorkspaceById(workspaceId);
     if (!workspace) throw new NotFoundException('Workspace não encontrado');
 
-    // taskRef format: PREFIX-NUMBER (e.g. TS-42)
     const match = /^([A-Z]+)-(\d+)$/i.exec(taskRef.trim());
     if (!match) throw new NotFoundException('Referência de task inválida');
 
     const taskNumber = parseInt(match[2], 10);
     const prefix = match[1].toUpperCase();
 
-    const task = await this.repo.findTaskByRef(workspaceId, taskNumber);
-    if (!task) throw new NotFoundException('Task não encontrada');
+    const [tasks, restricted] = await Promise.all([
+      this.repo.findTasksByNumber(workspaceId, taskNumber),
+      isAdmin
+        ? Promise.resolve<{ projectId: string }[]>([])
+        : this.repo.findRestrictedProjectIds(workspaceId, userId),
+    ]);
+    const blocked = new Set(restricted.map((r) => r.projectId));
+    const candidates = tasks.filter(
+      (t) => !blocked.has(t.projectId) && computeTaskPrefix(t.project.name) === prefix,
+    );
 
-    // Validate prefix matches project name
-    const expectedPrefix = computeTaskPrefix(task.project.name);
-    if (expectedPrefix !== prefix) throw new NotFoundException('Task não encontrada');
+    if (candidates.length === 0) throw new NotFoundException('Task não encontrada');
+    if (candidates.length > 1) {
+      const ref = `${prefix}-${taskNumber}`;
+      // As candidatas vão na mensagem (com o id de cada uma): o AllExceptionsFilter
+      // só repassa `message` e `code`, então um campo extra não chegaria ao cliente.
+      throw new ConflictException({
+        code: 'TASK_REF_AMBIGUOUS',
+        message:
+          `A referência ${ref} existe em ${candidates.length} projetos com o mesmo prefixo: ` +
+          candidates.map((c) => `"${c.project.name}" → ${c.id} (${c.title})`).join('; ') +
+          '. Indique a task pelo id.',
+      });
+    }
 
+    const task = candidates[0];
     return {
       taskId: task.id,
       projectId: task.projectId,

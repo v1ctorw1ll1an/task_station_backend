@@ -13,6 +13,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { AllowApiToken } from '../api-token/decorators/allow-api-token.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthUser } from '../auth/strategies/jwt.strategy';
@@ -49,7 +50,12 @@ export class WorkspaceController {
   // ── Projetos ──────────────────────────────────────────────────────────────────
 
   @Post('projetos')
+  // Liberada para o Claude Code (MCP): ele cria projeto como o usuário, e só onde o
+  // usuário é admin do workspace (WorkspaceAdminGuard vale para o token também).
+  @AllowApiToken()
   @UseGuards(WorkspaceAdminGuard)
+  // Cliente automatizado pode criar em loop; ninguém cria 30 projetos/min clicando.
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Criar projeto com colunas Kanban padrão' })
   @ApiResponse({ status: 201, description: 'Projeto criado com sucesso' })
@@ -248,7 +254,17 @@ export class WorkspaceController {
   @ApiOperation({ summary: 'Resolver referência de task (ex: TS-42) para taskId e projectId' })
   @ApiResponse({ status: 200, description: 'Task encontrada' })
   @ApiResponse({ status: 404, description: 'Task não encontrada' })
-  resolveTaskRef(@Param('workspaceId') workspaceId: string, @Param('taskRef') taskRef: string) {
-    return this.workspaceService.resolveTaskRef(workspaceId, taskRef);
+  @ApiResponse({
+    status: 409,
+    description:
+      'Prefixo repetido em mais de um projeto (TASK_REF_AMBIGUOUS) — a mensagem lista o id de cada candidata',
+  })
+  resolveTaskRef(
+    @Param('workspaceId') workspaceId: string,
+    @Param('taskRef') taskRef: string,
+    @Request() req: { workspaceMemberRole?: string; user: AuthUser },
+  ) {
+    const isAdmin = req.workspaceMemberRole === 'workspace_admin';
+    return this.workspaceService.resolveTaskRef(workspaceId, taskRef, req.user.id, isAdmin);
   }
 }

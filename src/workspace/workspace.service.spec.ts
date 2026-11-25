@@ -644,3 +644,89 @@ describe('WorkspaceService.revokeAdmin', () => {
     );
   });
 });
+
+// ── resolveTaskRef ─────────────────────────────────────────────────────────────
+
+describe('WorkspaceService.resolveTaskRef', () => {
+  // O número é único por projeto: "1" existe em vários projetos do mesmo workspace.
+  const task = (id: string, projectId: string, projectName: string) => ({
+    id,
+    taskNumber: 1,
+    title: `Task de ${projectName}`,
+    projectId,
+    columnId: 'col',
+    project: { id: projectId, name: projectName },
+  });
+  const comTasks = (tasks: unknown[], restricted: { projectId: string }[] = []) =>
+    makeRepo({
+      findWorkspaceById: jest.fn().mockResolvedValue(makeWorkspace()),
+      findTasksByNumber: jest.fn().mockResolvedValue(tasks),
+      findRestrictedProjectIds: jest.fn().mockResolvedValue(restricted),
+    });
+  const variosProjetos = [
+    task('t-lpw', 'p-lpw', 'landing page watidy'),
+    task('t-pt', 'p-pt', 'Projeto TaskDY'),
+    task('t-faq', 'p-faq', 'Faq'),
+  ];
+
+  it('acha a task do projeto do prefixo, mesmo que outro projeto tenha o mesmo número', async () => {
+    // O bug: pegava a primeira task "1" do workspace (LPW-1) e PT-1 dava 404.
+    const { service } = makeService(comTasks(variosProjetos));
+    await expect(service.resolveTaskRef('ws-1', 'pt-1', 'u-1', false)).resolves.toMatchObject({
+      taskId: 't-pt',
+      projectId: 'p-pt',
+      taskRef: 'PT-1',
+    });
+    await expect(service.resolveTaskRef('ws-1', 'FAQ-1', 'u-1', false)).resolves.toMatchObject({
+      taskId: 't-faq',
+    });
+  });
+
+  it('prefixo de nenhum projeto → 404', async () => {
+    const { service } = makeService(comTasks(variosProjetos));
+    await expect(service.resolveTaskRef('ws-1', 'ZZ-1', 'u-1', false)).rejects.toThrow(
+      NotFoundException,
+    );
+  });
+
+  it('dois projetos com o mesmo prefixo → 409 com as candidatas, sem escolher uma', async () => {
+    const { service } = makeService(
+      comTasks([task('t-a', 'p-a', 'mais saude'), task('t-b', 'p-b', 'Marketplace Sistema')]),
+    );
+    const err = await service.resolveTaskRef('ws-1', 'MS-1', 'u-1', false).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    const body = (err as ConflictException).getResponse() as { code: string; message: string };
+    expect(body.code).toBe('TASK_REF_AMBIGUOUS');
+    // Os ids vão na mensagem (o filtro global só repassa message e code):
+    // o cliente (MCP) consegue seguir pedindo pelo id.
+    expect(body.message).toContain('t-a');
+    expect(body.message).toContain('t-b');
+  });
+
+  it('projeto restrito para o usuário fica de fora — nem como candidata', async () => {
+    const repo = comTasks(
+      [task('t-a', 'p-a', 'mais saude'), task('t-b', 'p-b', 'Marketplace Sistema')],
+      [{ projectId: 'p-b' }],
+    );
+    const { service } = makeService(repo);
+    // Sem o restrito sobra uma: resolve, e não vaza o título do outro.
+    await expect(service.resolveTaskRef('ws-1', 'MS-1', 'u-1', false)).resolves.toMatchObject({
+      taskId: 't-a',
+    });
+    expect(repo.findRestrictedProjectIds).toHaveBeenCalledWith('ws-1', 'u-1');
+  });
+
+  it('admin do workspace não tem restrição — nem consulta', async () => {
+    const repo = comTasks([task('t-a', 'p-a', 'mais saude')]);
+    const { service } = makeService(repo);
+    await service.resolveTaskRef('ws-1', 'MS-1', 'u-1', true);
+    expect(repo.findRestrictedProjectIds).not.toHaveBeenCalled();
+  });
+
+  it('referência fora do formato → 404', async () => {
+    const { service } = makeService(comTasks(variosProjetos));
+    await expect(service.resolveTaskRef('ws-1', 'PT1', 'u-1', false)).rejects.toThrow(
+      NotFoundException,
+    );
+  });
+});
